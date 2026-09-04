@@ -1,0 +1,100 @@
+# SpiGes — project instructions
+
+SpiGes is a service of the SIS microservice infrastructure: Angular/ngrx frontend, ASP.NET Core backend, PostgreSQL + Oracle persistence.
+
+## Priority order
+
+1. Correctness, honesty, and technical reliability.
+2. The user's explicit request.
+3. This file and `.claude/rules/`.
+4. Style preferences.
+
+If a reliable answer cannot be produced, say so explicitly rather than guessing.
+
+## Workspace Structure
+
+Two separate Git repositories, mounted side-by-side under /workspace:
+
+- /workspace/backend/branch — .NET backend (SIS-SpiGes)
+- /workspace/frontend/branch — Angular frontend (SIS-SpiGes-UI)
+
+The TypeScript client used by the frontend is generated from the C# contract
+
+of the backend (see SPIGES_FRONTEND_PATTERNS.md on the frontend side) — a task that
+affects a backend DTO often has an impact on the frontend, and vice versa.
+
+Unless otherwise specified, stay in the repository relevant to the request;
+only modify the other repository if the task explicitly requires it.
+
+# Build Convention — Agent Environment (Docker Container)
+
+Always use `-p:NuGetAudit=false` with `dotnet build` and `dotnet restore`
+in this environment. The NuGet Audit check (online vulnerability check at api.nuget.org) is blocked by the corporate proxy
+and increases the build time from ~40s to ~3min. This setting applies ONLY to
+this agent environment — never include it in the repository's .csproj files.
+
+## Reference material (read on demand, not preloaded)
+
+- `.claude/docs/SPIGES_SOLUTION_CONTEXT.md` — architecture and business domain hierarchy (`Unit` / `BurGesv` / `EntId` / `UnitDescriptor` / `GroupType` / wave year).
+- `.claude/docs/SPIGES_DEFINITIONS.md` — reference C# definitions (enums, `UnitDescriptor`, etc.); backend only, frontend TS equivalents are generated from these contracts.
+- `.claude/docs/SPIGES_DESIGN_SPECS_INDEX.md` — index of the design specs in `docs/design-specs/`, with current/draft status per feature.
+- `.claude/docs/SpiGes_tests_examples.md` — worked unit test examples illustrating `.claude/rules/testing.md`.
+- `.claude/docs/Mermaid_diagram_examples.md` — reference diagram examples (class/ER/sequence) for when a diagram is explicitly requested.
+- `.claude/docs/SPIGES_FRONTEND_REFERENCE_EXAMPLE_DataDisclosure.md` — full frontend reference implementation (view-model-selector pattern).
+- `.claude/docs/SPIGES_REQUEST_TEMPLATE.md` — suggested structure for a feature/analysis/review request when the user wants to write one explicitly (optional; exploring the code directly is usually enough in agent mode).
+
+Backend and frontend pattern rules, and C# coding conventions, load automatically from `.claude/rules/` when a matching file is opened — see `.claude/rules/backend.md`, `.claude/rules/csharp-coding-conventions.md`, `.claude/rules/frontend.md`, `.claude/rules/testing.md`. Two Skills are available for documentation generation: `doc-confluence` and `doc-html`.
+
+## Language
+
+- Explanations in the user's language unless another language is explicitly requested.
+- Code, code comments, and API/code documentation are always written in English.
+
+## Work modes
+
+Distinguish strictly between:
+
+- **analysis** — explain or assess existing code, design, or behavior. Identify dependencies, implications, assumptions, risks, and open questions when relevant. Do not rewrite content or generate replacement code by default.
+- **review** — evaluate existing code, design, tests, or diagrams. Identify issues, risks, inconsistencies, and convention violations; explain why each matters; propose targeted corrections. Do not rewrite wholesale or generate a full replacement implementation by default.
+- **development** — generate or modify the requested code, test, document, or diagram. Provide a concrete, usable solution aligned with project conventions.
+
+Interpretation defaults: "analyze" → analysis. "review" → review. "generate" / "implement" / "write" / "create" / "add" / "fix" / "refactor" → development. Never enter development mode from an analysis or review request unless explicitly asked.
+
+## Defaults unless explicitly requested otherwise
+
+- Do not generate unit tests.
+- Do not generate a design document.
+- Do not generate UML or Mermaid diagrams.
+- Do not expand a focused change into unrelated boilerplate or refactoring.
+- State low-risk assumptions explicitly rather than asking unnecessary clarifying questions; ask only when proceeding would clearly go in the wrong direction.
+
+## Default technical scope
+
+- Frontend: Angular (standalone components), Angular Material, ngrx, rxjs, Oblique.
+- Backend: C#, ASP.NET Core, PostgreSQL, Oracle.
+- Documentation / static site: Hugo-Extended, Docsy.
+
+## General code rules
+
+Follow SOLID, DRY, established design patterns, security, maintainability, and consistency with the existing architecture. "Complete code" means what's needed to understand, use, and integrate the change — not unrelated surrounding code. Full C# style detail lives in `.claude/rules/csharp-coding-conventions.md` (loads automatically when editing `.cs` files).
+
+## Diagrams (when explicitly requested)
+
+Provide raw Mermaid source in a plain code block, **without** the `mermaid` language tag after the backticks — kept as copyable source only, no rendered preview. For UML-style diagrams: do not display `CancellationToken`; do not display `Task` (use the underlying type, or nothing if void); omit member/variable types unless omitting them would create ambiguity; use the UML relationship that matches the real design (association, aggregation, composition, dependency, realization, inheritance) rather than simplifying for visual convenience. See `docs/Mermaid_diagram_examples.md` for reference examples.
+
+## Design documents (when explicitly requested)
+
+Write in simple technical English (max B2 level), neutral human-like style, preferably passive form. Class, method, and enumeration names in italics. Use ASCII characters as much as possible; no trailing punctuation in bulleted/numbered list items. No table of contents. Structure, unless another one is explicitly requested:
+
+1. Overview
+2. Main design points and technical choices
+3. Focus on changes made to the existing system
+4. Configuration, if needed, describing all new parameters
+5. Diagrams — intentionally left empty, generated separately
+
+Ask targeted clarifying questions if information needed for a precise design explanation is missing.
+
+## Historical vs. preferred patterns
+
+EnterpriseClosure (backend) and Data Disclosure (frontend) are the current reference implementations — see `.claude/rules/backend.md` and `.claude/rules/frontend.md` for the concrete patterns they illustrate (vertical slice structure, view-model-selector). Export and Upload contain historical/legacy structural patterns still present in the codebase (multi-handler classes, AutoMapper, local orchestration exceptions) — informative for understanding existing code, not the default to replicate for new work. When examples conflict, prefer the most recent and architecturally clean example.
+
