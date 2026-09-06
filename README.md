@@ -1,4 +1,4 @@
-# spiges-agent
+# spiges (agent)
 
 Docker configuration that runs Claude Code, as an agent, on the SpiGes backend and frontend repositories, with several profiles (dev, qualitycheck), without ever installing Claude Code directly on Windows or inside WSL2.
 
@@ -22,14 +22,14 @@ If any of these three points is not yet in place, the full setup guide should be
 
 From WSL2:
 ```bash
-git clone <url-of-this-repository> ~/.agents/spiges-agent
+git clone <url-of-this-repository> ~/.agents/spiges
 ```
-(the exact location does not matter; `~/.agents/spiges-agent` is only an example)
+(the exact location does not matter; `~/.agents/spiges` is only an example)
 
 ### 2. Configure authentication
 
 ```bash
-cd ~/.agents/spiges-agent
+cd ~/.agents/spiges
 cp .env.example .env
 ```
 Then generate a token, if this has not been done yet:
@@ -54,38 +54,48 @@ This only needs to be done again after a change to the Dockerfile, to entrypoint
 
 Add the following to `~/.bashrc`:
 ```bash
-export SPIGES_AGENT_BASE_DIR=~/.agents/spiges-agent
-export AGENT_BASE_DIR=~/.agents
+AGENT_BASE_DIR=~/.agents
+SPIGES_AGENT_BASE_DIR=$AGENT_BASE_DIR/spiges
+SHARED_BASE_DIR=$AGENT_BASE_DIR/shared
 
 _claude_agent(){
+    local profile="$1"
+    local command="$2"
+    shift 2
+
     docker run -it --rm --user $(id -u):$(id -g) \
       -e HOME=/root \
       -e NUGET_PACKAGES=/home/$USER/.nuget/packages \
       -v /home/$USER/.nuget/packages:/home/$USER/.nuget/packages \
       --env-file $SPIGES_AGENT_BASE_DIR/.env \
-      -v $SPIGES_AGENT_BASE_DIR/claude-home-"$1":/root \
-      -v $SPIGES_AGENT_BASE_DIR/profiles/"$1"/CLAUDE.md:/root/.claude/CLAUDE.md:ro \
-      -v $SPIGES_AGENT_BASE_DIR/profiles/"$1"/settings.json:/root/.claude/settings.json:ro \
+      -v $SPIGES_AGENT_BASE_DIR/claude-home-$profile:/root \
+      -v $SPIGES_AGENT_BASE_DIR/profiles/$profile/CLAUDE.md:/root/.claude/CLAUDE.md:ro \
+      -v $SPIGES_AGENT_BASE_DIR/profiles/$profile/settings.json:/root/.claude/settings.json:ro \
       -v ~/workspace/spiges:/workspace \
-      -v $AGENT_BASE_DIR/shared:/shared \
-      spiges-claude-agent $2
+      -v $SHARED_BASE_DIR:/shared \
+      spiges-claude-agent "$command" "$@"
 }
 
 claude_dev(){
-    _claude_agent dev claude
+    _claude_agent dev claude "$@"
 }
 
 claude_dev_bash(){
-    _claude_agent dev bash
+    _claude_agent dev bash "$@"
 }
 
 claude_qualitycheck(){
-    _claude_agent qualitycheck claude
+    _claude_agent qualitycheck claude "$@"
 }
 ```
 `~/workspace/spiges` should be adjusted if the repositories are cloned somewhere else. Then reload:
 ```bash
 source ~/.bashrc
+```
+
+Extra arguments pass straight through to `claude`; for example, to resume a previous session:
+```bash
+claude_dev --resume <session-id>
 ```
 
 ## Usage
@@ -126,7 +136,7 @@ Changing a profile does not require rebuilding the image (docker build); these f
 ## Repository structure
 
 ```
-spiges-agent/
+spiges/
   .gitignore
   Dockerfile
   entrypoint.sh
