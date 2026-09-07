@@ -1,5 +1,7 @@
 # SpiGes — project instructions
 
+Version: v3
+
 SpiGes is a service of the SIS microservice infrastructure: Angular/ngrx frontend, ASP.NET Core backend, PostgreSQL + Oracle persistence.
 
 ## Priority order
@@ -49,6 +51,11 @@ Backend and frontend pattern rules, and C# coding conventions, load automaticall
 
 - Explanations in the user's language unless another language is explicitly requested.
 - Code, code comments, and API/code documentation are always written in English.
+- Keyword trigger "en anglais technique": switch to English, neutral tone, passive voice,
+  simple technical English (max B2 level), ASCII characters only (no accents, curly quotes,
+  em-dashes, emojis), standard contractions (doesn't, don't, shouldn't, won't, couldn't, etc.),
+  no trailing punctuation in bulleted/numbered list items. Applies to any deliverable, not only
+  design documents (see below, which follows the same style by default).
 
 ## Work modes
 
@@ -65,8 +72,28 @@ Interpretation defaults: "analyze" → analysis. "review" → review. "generate"
 - Do not generate unit tests.
 - Do not generate a design document.
 - Do not generate UML or Mermaid diagrams.
-- Do not expand a focused change into unrelated boilerplate or refactoring.
+- Do not expand a targeted change beyond what was requested; flag possible extensions
+  instead of applying them unprompted.
 - State low-risk assumptions explicitly rather than asking unnecessary clarifying questions; ask only when proceeding would clearly go in the wrong direction.
+
+## Instruction governance
+
+- If you detect an inconsistency between instructions, files (`CLAUDE.md`, `.claude/rules/`,
+  `.claude/docs/`), or prior statements in the conversation, flag it before acting on it
+  rather than silently resolving it.
+- When instructions exist at several levels (this file, `.claude/rules/`, `.claude/docs/`,
+  explicit in-conversation request) and appear to contradict each other, the most specific
+  (lowest) level is generally the intended reference point for resolving the contradiction.
+  This is a criterion to inform the decision, not a rule to act on automatically: still flag
+  the inconsistency first, as above, and wait for my confirmation before proceeding -- do not
+  apply the lower-level rule on the assumption that it must be correct.
+- For any multi-step procedure (setup, installation, configuration, migration): present one
+  step at a time and wait for my confirmation or questions on that step before moving to the
+  next one. Do not generate the full procedure upfront unless I explicitly ask for the
+  complete version at once.
+- If I phrase a request with unusual length or detail, or repeat a similar detailed request,
+  suggest formalizing it as a rule in this file or in `.claude/rules/`, as appropriate. This
+  is a suggestion only: never add or modify a rule without my explicit confirmation.
 
 ## Default technical scope
 
@@ -84,7 +111,7 @@ Provide raw Mermaid source in a plain code block, **without** the `mermaid` lang
 
 ## Design documents (when explicitly requested)
 
-Write in simple technical English (max B2 level), neutral human-like style, preferably passive form. Class, method, and enumeration names in italics. Use ASCII characters as much as possible; no trailing punctuation in bulleted/numbered list items. No table of contents. Structure, unless another one is explicitly requested:
+Write in simple technical English (max B2 level), neutral human-like style, preferably passive form, using standard contractions (doesn't, don't, shouldn't, won't, couldn't, etc.). Class, method, and enumeration names in italics. Use ASCII characters as much as possible; no trailing punctuation in bulleted/numbered list items. No table of contents. Structure, unless another one is explicitly requested:
 
 1. Overview
 2. Main design points and technical choices
@@ -94,7 +121,19 @@ Write in simple technical English (max B2 level), neutral human-like style, pref
 
 Ask targeted clarifying questions if information needed for a precise design explanation is missing.
 
+## Commit conventions
+
+Structure every commit message as: `[#<task number>] - Explanatory message beginning with
+a verb at the third person`.
+Example: `[#156397] - Updates and extends tests for the authorized-units trigger`.
+
+If the task number is not known from the conversation or the workspace, ask for it rather
+than guessing or omitting it.
+
+Keep commits atomic wherever possible: do not mix unrelated changes in a single commit.
+If a set of changes covers more than one unrelated concern, split it into separate commits
+rather than combining them.
+
 ## Historical vs. preferred patterns
 
 EnterpriseClosure (backend) and Data Disclosure (frontend) are the current reference implementations — see `.claude/rules/backend.md` and `.claude/rules/frontend.md` for the concrete patterns they illustrate (vertical slice structure, view-model-selector). Export and Upload contain historical/legacy structural patterns still present in the codebase (multi-handler classes, AutoMapper, local orchestration exceptions) — informative for understanding existing code, not the default to replicate for new work. When examples conflict, prefer the most recent and architecturally clean example.
-
