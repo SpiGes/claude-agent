@@ -1,6 +1,6 @@
 # SpiGes — project instructions
 
-Version: v3
+Version: v4
 
 SpiGes is a service of the SIS microservice infrastructure: Angular/ngrx frontend, ASP.NET Core backend, PostgreSQL + Oracle persistence.
 
@@ -111,15 +111,75 @@ Provide raw Mermaid source in a plain code block, **without** the `mermaid` lang
 
 ## Design documents (when explicitly requested)
 
-Write in simple technical English (max B2 level), neutral human-like style, preferably passive form, using standard contractions (doesn't, don't, shouldn't, won't, couldn't, etc.). Class, method, and enumeration names in italics. Use ASCII characters as much as possible; no trailing punctuation in bulleted/numbered list items. No table of contents. Structure, unless another one is explicitly requested:
+Generate a design document only when it is explicitly requested.
 
-1. Overview
-2. Main design points and technical choices
-3. Focus on changes made to the existing system
-4. Configuration, if needed, describing all new parameters
-5. Diagrams — intentionally left empty, generated separately
+### General rules
 
-Ask targeted clarifying questions if information needed for a precise design explanation is missing.
+When a design document is requested:
+- use a canvas/Artifact;
+- write only one authoritative version in it, updated through targeted edits rather than full regeneration;
+- write in simple technical English with a maximum B2 level;
+- use a neutral, simple, human-like style;
+- prefer passive form;
+- write class names, method names, and enumeration names in italics;
+- use as much as possible ASCII characters;
+- in bulleted or numbered lists, do not end each line with punctuation.
+
+A table of contents must not be written or maintained by hand, because it becomes wrong
+as soon as a chapter is added or renamed. It is expected to be produced by the publishing
+platform, for example by the Confluence table of contents macro, or by a generator at
+delivery time.
+
+### Default structure
+
+Unless another structure is explicitly requested, organize the document as follows:
+1. Versions;
+2. References;
+3. Purpose;
+4. Scope;
+5. Solution overview;
+6. one chapter per design point to resolve;
+7. Changes to the existing system;
+8. Configuration;
+9. Open points;
+10. Static diagrams;
+11. Dynamic diagrams.
+
+The expected content of those chapters is the following:
+- `Versions` is a table with the version, the date, and a short description of the change;
+- `References` lists the work items, the related design documents, and the external sources;
+- `Purpose` explains what the feature does and why it is needed, without describing the solution;
+- `Scope` states what is covered and, above all, what is left out;
+- `Solution overview` describes the retained solution as a whole, in about half a page, so that the following chapters can be read in any order;
+- the design point chapters carry the substance of the document;
+- `Changes to the existing system` lists the existing code and behavior that are modified, with the associated risk and the way back;
+- `Configuration` describes all new parameters, with their meaning and their default value;
+- `Open points` lists the questions that are still open, which are mostly business decisions;
+- the two diagram chapters are left empty, because diagrams are generated separately.
+
+A chapter that carries no content for a given feature may be omitted, except `Purpose`
+and the design point chapters.
+
+### Design point chapters
+
+Each design point is given its own chapter, named after the question that it answers
+rather than after a work item number.
+
+Those chapters must be ordered by dependency, so that a decision which conditions other
+decisions is placed first. They must not be ordered by work item number.
+
+Each of those chapters should contain, written as prose and without sub-headings:
+- the problem to solve;
+- the options that were considered, when there was more than one;
+- the retained decision;
+- the reason for that decision, and the consequence that is accepted with it.
+
+A decision must be stated in an affirmative form. When a point can't be decided yet, it
+belongs to `Open points` and not to a conditional sentence inside a design point chapter.
+Keeping the undecided points in a single chapter is what allows the design point chapters
+to stay affirmative.
+
+If important information is missing and prevents a precise design explanation, ask targeted clarifying questions.
 
 ## Commit conventions
 
