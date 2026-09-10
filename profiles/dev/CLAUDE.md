@@ -141,12 +141,13 @@ Unless another structure is explicitly requested, organize the document as follo
 6. one chapter per design point to resolve;
 7. Changes to the existing system;
 8. Configuration;
-9. Open points;
-10. Static diagrams;
-11. Dynamic diagrams.
+9. Deferred design points;
+10. Open points;
+11. Static diagrams;
+12. Dynamic diagrams.
 
 The expected content of those chapters is the following:
-- `Versions` is a table with the version, the date, and a short description of the change;
+- `Versions` is a table with the version, the date, and a short description of the change, tracking the releases of the document and not the iterations of its writing, so no line is added while a version is still being elaborated;
 - `References` lists the work items, the related design documents, and the external sources;
 - `Purpose` explains what the feature does and why it is needed, without describing the solution;
 - `Scope` states what is covered and, above all, what is left out;
@@ -154,11 +155,48 @@ The expected content of those chapters is the following:
 - the design point chapters carry the substance of the document;
 - `Changes to the existing system` lists the existing code and behavior that are modified, with the associated risk and the way back;
 - `Configuration` describes all new parameters, with their meaning and their default value;
+- `Deferred design points` lists the points that are decided but not implemented in the first version;
 - `Open points` lists the questions that are still open, which are mostly business decisions;
 - the two diagram chapters are left empty, because diagrams are generated separately.
 
 A chapter that carries no content for a given feature may be omitted, except `Purpose`
 and the design point chapters.
+
+The chapters must be numbered, in the form `## 4. Scope`, because the numbers are used to
+navigate and to refer to a chapter during a review. Sub-sections aren't numbered. When a
+chapter is inserted or removed, all the following chapters must be renumbered.
+
+### Deferred design points and open points
+
+A design document doesn't have to match the implementation one to one. The design may
+describe the target, while a first implementation covers only a part of it. Two different
+chapters are used for what isn't covered yet, and they must not be mixed.
+
+A point belongs to `Deferred design points` when it will have to be implemented sooner or
+later, because problems appear if it never is. Typical examples are an unbounded growth of
+data, a capability that degrades when nothing exercises it, or a missing guard that lets a
+wrong configuration pass silently. Such a point is decided, only its schedule is open, so it
+must be described precisely enough to be implemented later, together with what the first
+version does instead.
+
+A point belongs to `Open points` when it may never be done without any consequence. Typical
+examples are a business question that is still discussed, an option kept for a possible
+future need, or an idea that can be dropped. Nothing degrades if the answer never comes.
+
+The test to apply is what happens if the point is never treated. If something breaks or
+grows out of control, the point is deferred. If nothing happens, the point is open.
+
+### Density of the text
+
+Write to the point. A design document is a technical document, not an essay. Prefer short
+sentences and factual statements over explanatory or persuasive prose. Say a thing once, and drop
+the connectives, the reformulations, and the sentences that only announce what follows.
+
+This applies to every chapter, and most of all to `Purpose` and `Scope`, which state in a few
+lines what the document covers and why.
+
+It doesn't apply to the reason and to the consequence of a decision. Those two carry the value of
+the document and stay complete, even when they cost more words than the decision itself.
 
 ### Design point chapters
 
@@ -168,18 +206,57 @@ rather than after a work item number.
 Those chapters must be ordered by dependency, so that a decision which conditions other
 decisions is placed first. They must not be ordered by work item number.
 
-Each of those chapters should contain, written as prose and without sub-headings:
+Each of those chapters should contain:
 - the problem to solve;
 - the options that were considered, when there was more than one;
 - the retained decision;
 - the reason for that decision, and the consequence that is accepted with it.
 
-A decision must be stated in an affirmative form. When a point can't be decided yet, it
-belongs to `Open points` and not to a conditional sentence inside a design point chapter.
-Keeping the undecided points in a single chapter is what allows the design point chapters
-to stay affirmative.
+Short chapters are written as prose, without sub-headings. When the options are numerous or
+weighty, the chapter is split into one sub-heading per option, named `Choice 1 - ...` to
+`Choice n - ...`, followed by a `Choice and rationale` sub-heading that states the retained
+option and its reason. Each option sub-heading describes the mechanism, what it brings, and
+what it costs, so that a reader can weigh the options before reading the decision.
+
+A decision must be stated in an affirmative form. When a point can't be decided yet, or is
+decided but not implemented yet, it belongs to `Open points` or to `Deferred design points`
+and not to a conditional sentence inside a design point chapter. Keeping those points out of
+the design point chapters is what allows the design point chapters to stay affirmative.
 
 If important information is missing and prevents a precise design explanation, ask targeted clarifying questions.
+
+## Diagram Rules
+
+Generate diagrams only when they are explicitly requested or when they are clearly required by the request.
+
+When a diagram is generated:
+- provide the Mermaid code in a fenced code block with the `mermaid` language identifier, so that the diagram is rendered by the tools that support it;
+- use the current Mermaid syntax without restriction, since the code is only rendered by the claude.ai preview and by mermaid.live, which both follow the latest version;
+- give every relationship a label that explains its nature, except where the format already carries one, as the messages of a sequence diagram do;
+- do not wrap the answer in unnecessary explanatory prose;
+- keep the diagram semantically correct.
+
+A label that only repeats the names of the two ends carries nothing and must be replaced by a
+useful wording.
+
+A diagram that uses subgraphs should start with the directive
+`%%{init: {'themeVariables': {'clusterBkg': 'transparent', 'clusterBorder': '#9e9e9e'}}}%%`,
+which removes the default background of the blocks and keeps only their border. No theme is
+fixed, so the rendering still follows the light or dark mode of the viewer.
+
+In a design document, a Markdown image reference to the exported diagram must be added right
+after the code block, so that the diagram also appears where Mermaid isn't rendered, for
+example in Confluence. The image is placed in a folder named after the document, with a file
+name of the form `diagram-01-short-name.png`, and the spaces of the path are written as `%20`
+in the reference.
+
+For UML-style diagrams:
+- do not display `CancellationToken`;
+- do not display `Task`, use directly the underlying type, or nothing if void;
+- do not display variable types or member types unless omitting them would create ambiguity;
+- always use the relationship that matches the real design, including association, aggregation, composition, dependency, realization, inheritance, and other valid UML relationships.
+
+Relationships must not be simplified only for visual convenience.
 
 ## Commit conventions
 
