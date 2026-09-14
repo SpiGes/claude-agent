@@ -2,12 +2,26 @@ FROM node@sha256:a9f5f7c91a432850b2a8a7797adf5eadb6c733ceed61167806cee7ea7fbc29d
 
 FROM mcr.microsoft.com/dotnet/sdk:10.0
 
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl gnupg git && rm -rf /var/lib/apt/lists/*
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        gnupg \
+        git \
+        python3 \
+        python3-pip \
+        pipx \
+    && rm -rf /var/lib/apt/lists/*
+
 
 COPY certs/bit-proxy-ca.pem /usr/local/share/ca-certificates/bit-proxy-ca.crt
 COPY certs/nexus-ca.pem /usr/local/share/ca-certificates/nexus-ca.crt
 COPY certs/swissgov-root.cer /usr/local/share/ca-certificates/swissgov-root.crt
 RUN update-ca-certificates
+
+ENV PIPX_HOME=/opt/pipx
+ENV PIPX_BIN_DIR=/usr/local/bin
+RUN pipx install mcp-atlassian==0.23.1
 
 COPY --from=node-source /usr/local/bin/node /usr/local/bin/node
 COPY --from=node-source /usr/local/lib/node_modules /usr/local/lib/node_modules

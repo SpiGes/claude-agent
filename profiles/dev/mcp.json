@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "confluence": {
+      "command": "mcp-atlassian",
+      "env": {
+        "CONFLUENCE_URL": "https://intranet.confluence.bfs.admin.ch/confluence",
+        "CONFLUENCE_PERSONAL_TOKEN": "${CONFLUENCE_PERSONAL_TOKEN}"
+      }
+    }
+  }
+}
