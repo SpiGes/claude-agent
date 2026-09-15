@@ -31,7 +31,7 @@ than one of them.
 ## Design documents
 
 Design documents are versioned in the specs repository (SIS-SpiGes-Specs), not here — see
-its CLAUDE.md for the default structure and writing conventions to follow when drafting or
+its CLAUDE.md, and `.claude/skills/design-documents/SKILL.md` for the default structure and writing conventions to follow when drafting or
 updating one.
 
 ## Reference material (read on demand, not preloaded)
