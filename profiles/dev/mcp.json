@@ -6,6 +6,13 @@
         "CONFLUENCE_URL": "https://intranet.confluence.bfs.admin.ch/confluence",
         "CONFLUENCE_PERSONAL_TOKEN": "${CONFLUENCE_PERSONAL_TOKEN}"
       }
+    },
+    "devops": {
+      "command": "mcp-devops-onpremise",
+      "env": {
+        "DEVOPS_API_URL": "https://devops-server.admin.ch/DefaultCollection/BFS_SIS",
+        "DEVOPS_PAT": "${DEVOPS_PAT}"
+      }
     }
   }
 }

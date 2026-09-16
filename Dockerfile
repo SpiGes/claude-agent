@@ -13,7 +13,6 @@ RUN apt-get update \
         pipx \
     && rm -rf /var/lib/apt/lists/*
 
-
 COPY certs/bit-proxy-ca.pem /usr/local/share/ca-certificates/bit-proxy-ca.crt
 COPY certs/nexus-ca.pem /usr/local/share/ca-certificates/nexus-ca.crt
 COPY certs/swissgov-root.cer /usr/local/share/ca-certificates/swissgov-root.crt
@@ -21,7 +20,9 @@ RUN update-ca-certificates
 
 ENV PIPX_HOME=/opt/pipx
 ENV PIPX_BIN_DIR=/usr/local/bin
+
 RUN pipx install mcp-atlassian==0.23.1
+RUN pipx install mcp-devops-onpremise==2.1.0
 
 COPY --from=node-source /usr/local/bin/node /usr/local/bin/node
 COPY --from=node-source /usr/local/lib/node_modules /usr/local/lib/node_modules
@@ -40,6 +41,7 @@ ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 ENV DOTNET_NOLOGO=1
 ENV DOTNET_CLI_TELEMETRY_OPTOUT=1
 ENV NUGET_CERT_REVOCATION_MODE=offline
+ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 ENV SSL_CERT_DIR=/etc/ssl/certs
 
