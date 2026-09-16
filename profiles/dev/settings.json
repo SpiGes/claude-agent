@@ -12,11 +12,33 @@
     ],
     "ask": [
       "Bash(git commit:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "mcp__confluence__confluence_create*",
+      "mcp__confluence__confluence_copy*",
+      "mcp__confluence__confluence_update*",
+      "mcp__confluence__confluence_add*",
+      "mcp__confluence__confluence_delete_attachment",
+      "mcp__devops__devops_pull_request_update_comment",
+      "mcp__devops__devops_pull_request_update_thread",
+      "mcp__devops__devops_pull_request_write",
+      "mcp__devops__devops_pull_request_reply_comment",
+      "mcp__devops__devops_work_item_update",
+      "mcp__devops__devops_work_item_create",
+      "mcp__devops__devops_work_item_comment_add",
+      "mcp__devops__devops_work_item_comment_update"
     ],
     "deny": [
       "Read(./.env)",
-      "Read(**/appsettings.custom.json)"
+      "Read(**/appsettings.custom.json)",
+      "mcp__confluence__confluence_delete_page",
+      "mcp__confluence__confluence_move_page",
+      "mcp__confluence__confluence_set_page_restrictions",
+      "mcp__devops__devops_work_item_delete",
+      "mcp__devops__devops_work_item_undelete",
+      "mcp__devops__devops_work_item_comment_delete",
+      "mcp__devops__devops_pull_request_delete_comment",
+      "mcp__devops__devops_wiki*",
+      "mcp__devops__devops_repository*"
     ]
   }
 }
