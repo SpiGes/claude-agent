@@ -9,7 +9,7 @@ Claude Code is never installed directly on Windows, nor directly inside WSL2: it
 Before this repository can be used, the following must already be in place:
 
 - Docker Desktop, with WSL2 integration enabled for the Ubuntu distribution (Settings, Resources, WSL Integration).
-- WSL2 (Ubuntu), with the SpiGes repositories already cloned natively inside it, not on Windows.
+- WSL2 (Ubuntu), with the SpiGes repositories already cloned natively inside it, not on Windows (for performance reason).
 - A valid Claude Code token (see Step 2 below). A Claude.ai account with a subscription is enough; a separate API key is not needed.
 
 If any of these points is not yet in place, the full setup guide ("Containerized Agent, Native WSL2 Development") should be consulted before continuing here.
