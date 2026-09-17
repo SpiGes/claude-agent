@@ -90,6 +90,7 @@ _claude_agent(){
       -v /home/$USER/.nuget/packages:/home/$USER/.nuget/packages \
       --env-file $AGENT_ENV_FILE \
       -v "$AGENT_HOMES_DIR/$profile:/root" \
+      -v /home/$USER/.ssh:/root/.ssh:ro \
       -v $AGENT_BASE_DIR/profiles/$profile/CLAUDE.md:/root/.claude/CLAUDE.md:ro \
       -v $AGENT_BASE_DIR/profiles/$profile/settings.json:/root/.claude/settings.json:ro \
       -v "$AGENT_USER_FILE:/root/.claude/CLAUDE.user.md" \
