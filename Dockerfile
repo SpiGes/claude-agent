@@ -8,6 +8,7 @@ RUN apt-get update \
         curl \
         gnupg \
         git \
+        jq \
         python3 \
         python3-pip \
         pipx \
