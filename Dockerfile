@@ -12,6 +12,8 @@ RUN apt-get update \
         python3 \
         python3-pip \
         pipx \
+        ripgrep \
+        postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 COPY certs/bit-proxy-ca.pem /usr/local/share/ca-certificates/bit-proxy-ca.crt
