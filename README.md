@@ -9,7 +9,8 @@ Claude Code is never installed directly on Windows, nor directly inside WSL2: it
 Before this repository can be used, the following must already be in place:
 
 - Docker Desktop, with WSL2 integration enabled for the Ubuntu distribution (Settings, Resources, WSL Integration).
-- WSL2 (Ubuntu), with the SpiGes repositories already cloned natively inside it, not on Windows (for performance reason).
+- WSL2 (Ubuntu), with the SpiGes repositories already cloned natively inside it (over HTTPS, not SSH), not on Windows (for performance reason).
+- A Personal Access Token dedicated to Git operations against the on-premise Azure DevOps Server, scoped to Code (Read & Write) only — distinct from the read-only `DEVOPS_PAT` used by the Azure DevOps MCP server. See the full setup guide, Chapter 3, for how this token is used on both WSL2 and inside the container.
 - A valid Claude Code token (see Step 2 below). A Claude.ai account with a subscription is enough; a separate API key is not needed.
 
 If any of these points is not yet in place, the full setup guide ("Containerized Agent, Native WSL2 Development") should be consulted before continuing here.
@@ -50,6 +51,14 @@ A URL is shown; it should be opened in a browser, followed by login and the on-s
 CLAUDE_CODE_OAUTH_TOKEN=<the generated token>
 ```
 This file must never be committed or shared. Since it lives outside the versioned repository entirely, rather than as a `.gitignore`-protected file inside it, it is not exposed to a broad `git add -A`, or to a backup of the repository folder that does not respect ignore rules.
+
+The same file must also carry the Git access token from the Prerequisites above, so that the disposable container can authenticate over HTTPS against the on-premise Azure DevOps Server with no `.ssh` mount and no private key involved. This is done through Git's own environment-variable configuration mechanism, which needs no file written inside the container:
+```
+GIT_CONFIG_COUNT=1
+GIT_CONFIG_KEY_0=http.https://devops-server.admin.ch.extraHeader
+GIT_CONFIG_VALUE_0=Authorization: Basic <PAT in base64, e.g. via printf ':%s' '<PAT>' | base64 -w0>
+```
+These lines are appended to `$AGENT_ENV_FILE`, alongside `CLAUDE_CODE_OAUTH_TOKEN`, and reach the container through the same `--env-file` already used below. The full setup guide (Chapter 3) documents the equivalent, one-time setup for the WSL2 host itself, needed for the person's own `git` operations outside the container.
 
 ### 4. Load the launch functions
 

@@ -8,7 +8,6 @@ RUN apt-get update \
         curl \
         gnupg \
         git \
-        openssh-client \
         python3 \
         python3-pip \
         pipx \
