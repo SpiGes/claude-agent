@@ -17,6 +17,25 @@ RUN apt-get update \
         tree \
         xmlstarlet \
         postgresql-client \
+        unzip \
+        fonts-liberation \
+        libglib2.0-0t64 \
+        libnspr4 \
+        libnss3 \
+        libatk1.0-0t64 \
+        libatk-bridge2.0-0t64 \
+        libdbus-1-3 \
+        libx11-6 \
+        libxcomposite1 \
+        libxdamage1 \
+        libxext6 \
+        libxfixes3 \
+        libxrandr2 \
+        libgbm1 \
+        libxcb1 \
+        libxkbcommon0 \
+        libasound2t64 \
+        libatspi2.0-0t64 \
     && rm -rf /var/lib/apt/lists/* \
     && ln -s /usr/bin/fdfind /usr/local/bin/fd
 
@@ -42,6 +61,7 @@ ENV NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/bit-proxy-ca.crt
 
 RUN npm install -g @anthropic-ai/claude-code
 RUN npm install -g @ast-grep/cli
+RUN npm install -g @mermaid-js/mermaid-cli
 RUN chmod -R 777 $(npm root -g) $(npm config get prefix)/bin
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
