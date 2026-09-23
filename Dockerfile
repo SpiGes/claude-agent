@@ -13,8 +13,12 @@ RUN apt-get update \
         python3-pip \
         pipx \
         ripgrep \
+        fd-find \
+        tree \
+        xmlstarlet \
         postgresql-client \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -s /usr/bin/fdfind /usr/local/bin/fd
 
 COPY certs/bit-proxy-ca.pem /usr/local/share/ca-certificates/bit-proxy-ca.crt
 COPY certs/nexus-ca.pem /usr/local/share/ca-certificates/nexus-ca.crt
@@ -26,6 +30,8 @@ ENV PIPX_BIN_DIR=/usr/local/bin
 
 RUN pipx install mcp-atlassian==0.23.1
 RUN pipx install mcp-devops-onpremise==2.1.0
+RUN pipx install yq==4.2.0
+RUN pipx install semgrep==1.177.0
 
 COPY --from=node-source /usr/local/bin/node /usr/local/bin/node
 COPY --from=node-source /usr/local/lib/node_modules /usr/local/lib/node_modules
@@ -35,6 +41,7 @@ RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
 ENV NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/bit-proxy-ca.crt
 
 RUN npm install -g @anthropic-ai/claude-code
+RUN npm install -g @ast-grep/cli
 RUN chmod -R 777 $(npm root -g) $(npm config get prefix)/bin
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
