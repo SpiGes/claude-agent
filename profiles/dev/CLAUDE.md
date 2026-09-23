@@ -28,6 +28,29 @@ with its own `CLAUDE.md` covering what is specific to it:
 It can also be opened one level up, at the parent of the three, for a task that spans more
 than one of them.
 
+## Tool preferences for code analysis and file manipulation
+
+To save tokens, prefer these over a full Read + manual scan/edit when they fit:
+
+- `ast-grep` — structural code search (matches syntax, not just text) across C# and
+  TypeScript, e.g. `ast-grep --lang csharp -p '<pattern>'`. Use instead of `rg` + reading
+  each hit's file when the goal is a precise code pattern (a method signature, a specific
+  call shape), not a plain string.
+- `yq` — read or patch one field in a YAML file (notably Helm `values-*.yaml` in the
+  gitops repo) without a full Read + Edit round-trip, e.g.
+  `yq '.deployment.replicas' spiges/helm/values-ref.yaml`.
+- `xmlstarlet` — query or validate an XML file (mapping configs, EA exports, test
+  delivery files in the database-writer/DatabaseWriter domain) without reading it in full.
+- `fd` — fast file search that respects `.gitignore` and skips `bin/`, `obj/`,
+  `node_modules` by default; prefer it over `find` for locating files by name/pattern.
+- `tree` — quick, compact overview of a directory's structure when a full recursive
+  listing isn't needed.
+- `semgrep` — pattern-based static analysis across languages (C#, TypeScript, YAML),
+  useful for the `code-review`/`security-review` skills when a check needs more precision
+  than a plain-text `rg` match.
+- `ripgrep` (`rg`) stays the default for plain text search when no structural match is
+  needed.
+
 ## Design documents
 
 Design documents are versioned in the specs repository (SIS-SpiGes-Specs), not here — see
