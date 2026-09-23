@@ -50,6 +50,11 @@ To save tokens, prefer these over a full Read + manual scan/edit when they fit:
   than a plain-text `rg` match.
 - `ripgrep` (`rg`) stays the default for plain text search when no structural match is
   needed.
+- `mmdc` (`@mermaid-js/mermaid-cli`) — renders Mermaid diagram code to PNG/SVG/PDF. Requires
+  passing a Puppeteer config file with `--no-sandbox`, since the container has no
+  unprivileged user namespaces for Chromium's own sandbox:
+  `echo '{ "args": ["--no-sandbox"] }' > puppeteer-config.json && mmdc -i diagram.mmd -o diagram.png -p puppeteer-config.json`.
+  Without `--no-sandbox`, the browser launch fails with "No usable sandbox!".
 
 ## Design documents
 
