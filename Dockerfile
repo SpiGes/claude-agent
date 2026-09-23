@@ -101,13 +101,15 @@ ENV NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/bit-proxy-ca.crt
 
 # Claude Code CLI itself — the agent running in this container.
 RUN npm install -g @anthropic-ai/claude-code
+# The container later runs as a non-root user (--user $(id -u):$(id -g)); only this package's
+# own directory needs to stay writable, for Claude Code's runtime self-update to succeed.
+# Scoped to @anthropic-ai rather than the whole global node_modules tree, so it stays cheap
+# even as more (non-self-updating) global packages are added below.
+RUN chmod -R 777 $(npm root -g)/@anthropic-ai $(npm config get prefix)/bin
 # Structural code search across C#/TypeScript, matches syntax rather than plain text.
 RUN npm install -g @ast-grep/cli
 # Renders Mermaid diagram code to PNG/SVG/PDF (`mmdc`).
 RUN npm install -g @mermaid-js/mermaid-cli
-# Grant the non-root container user write access to the global npm directories, so packages
-# such as the ones above can be installed/updated without root.
-RUN chmod -R 777 $(npm root -g) $(npm config get prefix)/bin
 
 # Container entrypoint script.
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
