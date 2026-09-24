@@ -1,6 +1,6 @@
 # bfs-claude-agent
 
-Docker configuration that runs Claude Code as a disposable containerized agent, currently used on the SpiGes backend, frontend, and specs repositories, with several profiles (dev, qualitycheck) and optional MCP integrations (Confluence Data Center, Azure DevOps Server). The container mechanism itself, the launch function, the profile system, the optional MCP support, is generic and carries nothing specific to SpiGes. The profiles built on top of it are not: each one's `CLAUDE.md`, and the `rules/`, `skills/`, `docs/` it may declare (see Available profiles below), hold SpiGes-specific content, alongside the three certificates baked into the image.
+Docker configuration that runs Claude Code as a disposable containerized agent, currently used on the SpiGes backend, frontend, and specs repositories, with several profiles (dev, qualitycheck) and optional MCP integrations (Confluence Data Center, Azure DevOps Server).
 
 Claude Code is never installed directly on Windows, nor directly inside WSL2: it always runs inside its own disposable container, with access to the file system limited to whatever is explicitly mounted into it.
 
@@ -217,14 +217,10 @@ bfs-claude-agent/
       settings.json
 ```
 
-The three `COPY` instructions for the certificates in the Dockerfile are the one remaining organization-specific part of an otherwise generic image; this is a known, deliberately unaddressed limitation, not an oversight.
-
 Nothing personal or secret lives inside this repository:
 - `AGENT_HOMES_DIR` (default `$HOME/.claude-agent-homes`), one subfolder per profile, holds Claude Code's own state (session history, local configuration), plus a shared `CLAUDE.user.md` at its root (see "A personal preference" above).
 - `AGENT_ENV_FILE` (default `$AGENT_HOMES_DIR/.env`) holds the real Claude Code token, the Git tokens, and, when GitHub is used, the agent account's GitHub API token and commit email; only `.env.example`, with placeholders, is committed here.
-- `SHARED_BASE_DIR` (default `~/.agents/shared`, where this very file lives) holds ad-hoc documents shared with the agent, outside any project repository.
-
-With no secret and no personal state ever placed inside it, this repository needs no `.gitignore` at all. The image and the launch mechanism (Dockerfile, entrypoint.sh, launch.sh) could serve a different project unchanged; the profiles themselves (`CLAUDE.md`, `rules/`, `skills/`, `docs/`) would not, since they hold SpiGes-specific content.
+- `SHARED_BASE_DIR` (default `~/.agents/shared`) holds ad-hoc documents shared with the agent, outside any project repository.
 
 ## Troubleshooting
 
