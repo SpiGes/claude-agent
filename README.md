@@ -11,130 +11,123 @@ Before this repository can be used, the following must already be in place:
 - Docker Desktop, with WSL2 integration enabled for the Ubuntu distribution (Settings, Resources, WSL Integration).
 - WSL2 (Ubuntu), with the SpiGes repositories already cloned natively inside it (over HTTPS, not SSH), not on Windows (for performance reason).
 - A Personal Access Token dedicated to Git operations against the on-premise Azure DevOps Server, scoped to Code (Read & Write) only — distinct from the read-only `DEVOPS_PAT` used by the Azure DevOps MCP server. See the full setup guide, Chapter 3, for how this token is used on both WSL2 and inside the container.
-- A valid Claude Code token (see Step 2 below). A Claude.ai account with a subscription is enough; a separate API key is not needed.
+- A Claude.ai account with a subscription, from which the Claude Code token is generated (Step 4 below); a separate API key is not needed.
+- Optional, only for repositories hosted on GitHub: a dedicated GitHub account for the agent, distinct from the person's own account (see "Optional: GitHub access" below).
 
 If any of these points is not yet in place, the full setup guide ("Containerized Agent, Native WSL2 Development") should be consulted before continuing here.
 
 ## Installation
 
+The minimum steps, all run from WSL2. The reasons behind them are given in "Installation details" below.
+
 ### 1. Clone this repository
 
-From WSL2:
 ```bash
 git clone <url-of-this-repository> ~/.agents/bfs-claude-agent
-export AGENT_BASE_DIR=~/.agents/bfs-claude-agent
 ```
-(the exact location does not matter; `AGENT_BASE_DIR` is what the launch function actually uses)
 
 ### 2. Build the image
 
 ```bash
-docker build -t bfs-claude-agent "$AGENT_BASE_DIR"
+docker build -t bfs-claude-agent ~/.agents/bfs-claude-agent
 ```
-This only needs to be done again after a change to the Dockerfile, to entrypoint.sh, or to the certificates under certs/, not after a change to a profile (see below).
+Needed again only after a change to the Dockerfile, to `entrypoint.sh`, or to the certificates under `certs/`.
 
-### 3. Configure authentication
+### 3. Create the personal folders
 
-Personal state and secrets are kept entirely outside this repository, in `AGENT_HOMES_DIR` (default `$HOME/.claude-agent-homes`). It must be created by hand, once, so that Docker does not create it itself with the wrong owner:
 ```bash
-export AGENT_HOMES_DIR="$HOME/.claude-agent-homes"
-export AGENT_ENV_FILE="$AGENT_HOMES_DIR/.env"
-mkdir -p "$AGENT_HOMES_DIR/dev" "$AGENT_HOMES_DIR/qualitycheck"
-cp "$AGENT_BASE_DIR/.env.example" "$AGENT_ENV_FILE"
+mkdir -p ~/.claude-agent-homes/dev ~/.claude-agent-homes/qualitycheck ~/.agents/shared
+cp ~/.agents/bfs-claude-agent/.env.example ~/.claude-agent-homes/.env
 ```
-Generate a token, if this has not been done yet:
+
+### 4. Fill in the `.env` file
+
+Generate the Claude Code token (a URL is shown, to be opened in a browser for login):
 ```bash
 docker run -it --rm bfs-claude-agent claude setup-token
 ```
-A URL is shown; it should be opened in a browser, followed by login and the on-screen instructions. The generated token is then written into `$AGENT_ENV_FILE`:
-```
-CLAUDE_CODE_OAUTH_TOKEN=<the generated token>
-```
-This file must never be committed or shared. Since it lives outside the versioned repository entirely, rather than as a `.gitignore`-protected file inside it, it is not exposed to a broad `git add -A`, or to a backup of the repository folder that does not respect ignore rules.
+Then, in `~/.claude-agent-homes/.env`, replace the placeholders of:
+- `CLAUDE_CODE_OAUTH_TOKEN`, with the generated token;
+- `GIT_CONFIG_VALUE_0`, with the Azure DevOps Git token from the Prerequisites, base64-encoded as shown in the file.
 
-The same file must also carry the Git access token from the Prerequisites above, so that the disposable container can authenticate over HTTPS against the on-premise Azure DevOps Server with no `.ssh` mount and no private key involved. This is done through Git's own environment-variable configuration mechanism, which needs no file written inside the container:
-```
-GIT_CONFIG_COUNT=1
-GIT_CONFIG_KEY_0=http.https://devops-server.admin.ch.extraHeader
-GIT_CONFIG_VALUE_0=Authorization: Basic <PAT in base64, e.g. via printf ':%s' '<PAT>' | base64 -w0>
-```
-These lines are appended to `$AGENT_ENV_FILE`, alongside `CLAUDE_CODE_OAUTH_TOKEN`, and reach the container through the same `--env-file` already used below. The full setup guide (Chapter 3) documents the equivalent, one-time setup for the WSL2 host itself, needed for the person's own `git` operations outside the container.
+The GitHub lines stay commented out unless "Optional: GitHub access" below is set up.
 
-### 4. Load the launch functions
+### 5. Load the launch functions
 
-Add the following to `~/.bashrc`:
 ```bash
-export AGENT_BASE_DIR="$HOME/.agents/bfs-claude-agent"
-export AGENT_HOMES_DIR="${AGENT_HOMES_DIR:-$HOME/.claude-agent-homes}"
-export AGENT_ENV_FILE="${AGENT_ENV_FILE:-$HOME/.claude-agent-homes/.env}"
-export SHARED_BASE_DIR="$HOME/.agents/shared"
-export AGENT_USER_FILE="${AGENT_USER_FILE:-$AGENT_HOMES_DIR/CLAUDE.user.md}"
-
-_claude_agent(){
-    local profile="$1"
-    local command="$2"
-    shift 2
-
-    local -a mcp_mount=()
-    local -a mcp_args=()
-    local mcp_config="$AGENT_BASE_DIR/profiles/$profile/mcp.json"
-    if [ "$command" = "claude" ] && [ -f "$mcp_config" ]; then
-        mcp_mount=(-v "$mcp_config:/root/.claude/mcp.json:ro")
-        mcp_args=(--mcp-config /root/.claude/mcp.json)
-    fi
-
-    local -a context_mounts=()
-    for d in rules skills docs; do
-        local src="$AGENT_BASE_DIR/profiles/$profile/.claude/$d"
-        if [ -d "$src" ]; then
-            context_mounts+=(-v "$src:/root/.claude/$d:ro")
-        fi
-    done
-
-    touch "$AGENT_USER_FILE" 2>/dev/null || true
-
-    docker run -it --rm --user $(id -u):$(id -g) \
-      -e HOME=/root \
-      -e NUGET_PACKAGES=/home/$USER/.nuget/packages \
-      -v /home/$USER/.nuget/packages:/home/$USER/.nuget/packages \
-      --env-file $AGENT_ENV_FILE \
-      -v "$AGENT_HOMES_DIR/$profile:/root" \
-      -v $AGENT_BASE_DIR/profiles/$profile/CLAUDE.md:/root/.claude/CLAUDE.md:ro \
-      -v $AGENT_BASE_DIR/profiles/$profile/settings.json:/root/.claude/settings.json:ro \
-      -v "$AGENT_USER_FILE:/root/.claude/CLAUDE.user.md" \
-      "${mcp_mount[@]}" \
-      "${context_mounts[@]}" \
-      -v "$PWD:/workspace" \
-      -v $SHARED_BASE_DIR:/shared \
-      bfs-claude-agent "$command" "${mcp_args[@]}" "$@"
-}
-
-claude_dev(){
-    _claude_agent dev claude "$@"
-}
-
-claude_dev_bash(){
-    _claude_agent dev bash "$@"
-}
-
-claude_qualitycheck(){
-    _claude_agent qualitycheck claude "$@"
-}
-```
-Also create the shared folder by hand, once, for the same ownership reason as `AGENT_HOMES_DIR` above:
-```bash
-mkdir -p ~/.agents/shared
-```
-Then reload:
-```bash
+echo 'source ~/.agents/bfs-claude-agent/launch.sh' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-**The workspace is whatever folder is current when the function is called**, not a fixed path baked into the function. Move into the repository (or, for a task spanning several, into the parent folder holding them side by side, see "Working across several repositories" below) before running `claude_dev`.
+### 6. Start the agent
 
-Extra arguments pass straight through to `claude`; for example, to resume a previous session:
 ```bash
-claude_dev --resume <session-id>
+cd <repository>
+claude_dev
+```
+
+### Installation details
+
+- **Personal state and secrets live outside this repository**, in `~/.claude-agent-homes` (`AGENT_HOMES_DIR`). Since the `.env` file is not inside the versioned folder at all, rather than a `.gitignore`-protected file within it, it is not exposed to a broad `git add -A`, or to a backup of the repository folder that does not respect ignore rules. It must never be committed or shared.
+- **The folders of Step 3 are created by hand**, before the first launch, so that Docker does not create them itself with the wrong owner.
+- **Git authenticates through environment variables only** (`GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_<n>`, `GIT_CONFIG_VALUE_<n>`): each entry adds an `Authorization` header for one server only, so the container needs no `.ssh` mount, no private key, and no credential file. They reach the container through `--env-file`, like `CLAUDE_CODE_OAUTH_TOKEN`. The full setup guide (Chapter 3) documents the equivalent, one-time setup for the WSL2 host itself, needed for the person's own `git` operations outside the container.
+- **`docker --env-file` keeps every character after `=` as is**, trailing spaces and Windows line endings (`\r`) included. A value copied with either of them may break silently.
+- **`launch.sh` is sourced, not copied**, so a plain `git pull` on this repository updates the launch functions at the next shell start. It defines `claude_dev`, `claude_dev_bash`, and `claude_qualitycheck` (see Usage), on top of `_claude_agent`, which runs the container for a given profile.
+- **Every path is overridable**: `AGENT_HOMES_DIR`, `AGENT_ENV_FILE` (default `$AGENT_HOMES_DIR/.env`), `SHARED_BASE_DIR` (default `~/.agents/shared`), and `AGENT_USER_FILE` (default `$AGENT_HOMES_DIR/CLAUDE.user.md`) can be exported in `~/.bashrc` before `launch.sh` is sourced. `AGENT_BASE_DIR` defaults to the folder `launch.sh` itself lives in, so this repository can be cloned anywhere.
+- **The workspace is whatever folder is current when the function is called**, not a fixed path baked into the function. Move into the repository (or, for a task spanning several, into the parent folder holding them side by side, see "Working across several repositories" below) before running `claude_dev`.
+- **Extra arguments pass straight through to `claude`**; for example, to resume a previous session:
+  ```bash
+  claude_dev --resume <session-id>
+  ```
+
+## Optional: GitHub access
+
+Only needed when the agent works on repositories hosted on GitHub. The agent then acts through its own GitHub account, never through the person's, with two separate fine-grained Personal Access Tokens, so that neither token can do everything on its own: the Git token can push but cannot open a pull request, the API token can open a pull request but cannot push.
+
+### GitHub organization side
+
+Done once by an organization owner:
+- The agent account is invited as a **member** of the organization, not as an outside collaborator: fine-grained tokens cannot reach an organization's repositories for an outside collaborator.
+- The agent account is added to a team dedicated to agent accounts (secret, no parent team), and that team is granted **Write** on the repositories the agent works on. The team is then the single point of control over which repositories the agent can reach.
+- The organization's base permissions are set to **No permission**, so that the agent account does not silently inherit access to every repository, including a private one created later.
+- Fine-grained Personal Access Tokens are allowed in the organization settings. When administrator approval is required, every new token, and every later change to a token's permissions, stays pending, and fails with a 403, until an owner approves it.
+
+### Tokens
+
+Created while signed in as the agent account (Settings, Developer settings, Fine-grained tokens), both with the organization as resource owner, an expiration date, and "All repositories" as repository access (the team above restricts it):
+
+| Token | Repository permissions | Variable in the `.env` file |
+|---|---|---|
+| Git token | Contents: Read and write | `GIT_CONFIG_KEY_1` / `GIT_CONFIG_VALUE_1` |
+| API token | Issues: Read and write, Pull requests: Read and write, Contents: Read-only | `GH_TOKEN` |
+
+Metadata: Read-only is added by GitHub automatically; every other permission, including Workflows, stays at No access. Without Workflows, a push that creates or changes a file under `.github/workflows/` is rejected, so any CI change goes through a person.
+
+### `.env` file
+
+The four GitHub lines of `.env.example` are uncommented, and `GIT_CONFIG_COUNT` is raised to 2; with it left at 1, Git silently ignores the GitHub entry:
+```
+GIT_CONFIG_COUNT=2
+GIT_CONFIG_KEY_0=http.https://devops-server.admin.ch.extraHeader
+GIT_CONFIG_VALUE_0=Authorization: Basic <Azure DevOps PAT in base64>
+GIT_CONFIG_KEY_1=http.https://github.com/.extraHeader
+GIT_CONFIG_VALUE_1=Authorization: Basic <GitHub Git token in base64, e.g. via printf 'x-access-token:%s' '<PAT>' | base64 -w0>
+GITHUB_COMMIT_EMAIL=<ID>+<login>@users.noreply.github.com
+GH_TOKEN=<GitHub API token, plain, no base64>
+```
+- `GIT_CONFIG_VALUE_1` applies only to `https://github.com/` URLs, so the Azure DevOps token and the GitHub token never reach the wrong server.
+- `GITHUB_COMMIT_EMAIL` is the agent account's noreply address, shown in its Settings, Emails when "Keep my email addresses private" is enabled; its numeric part is the account's permanent ID, which keeps commits linked to the account even after a rename. At startup, `entrypoint.sh` writes it into `/tmp/gitconfig-github`, which the system Git configuration includes only for repositories with a `github.com` remote. Repositories on the Azure DevOps Server keep the default `Claude Agent <claude-agent@spiges.local>` authorship; without this variable, GitHub repositories keep it too, and their commits are not linked to any GitHub account.
+- `GH_TOKEN` is read directly by the GitHub CLI (`gh`), with no `gh auth login` needed. `gh` is deliberately not wired into Git (no `gh auth setup-git`), so that Git keeps using its own token only.
+
+Reading the tokens with `read -rs` and appending them with `printf`, rather than pasting them into an editor, avoids stray spaces and `\r`, and keeps them out of the shell history.
+
+### Check
+
+Once the container is started, from `claude_dev_bash`:
+```bash
+gh auth status                                  # agent account, via GH_TOKEN
+git -C <github-repo> push --dry-run origin HEAD # authenticates with the Git token
+git -C <github-repo> config user.email          # the noreply address
 ```
 
 ## Usage
@@ -191,10 +184,10 @@ The dev profile's `mcp.json` currently declares two MCP servers, each documented
    ```bash
    mkdir -p "$AGENT_HOMES_DIR/<name>"
    ```
-3. Add a function to `~/.bashrc`:
+3. Add a function to `launch.sh`, next to the existing ones:
    ```bash
    claude_<name>(){
-       _claude_agent <name> claude
+       _claude_agent <name> claude "$@"
    }
    ```
 
@@ -204,6 +197,7 @@ The dev profile's `mcp.json` currently declares two MCP servers, each documented
 bfs-claude-agent/
   Dockerfile
   entrypoint.sh
+  launch.sh
   certs/
     bit-proxy-ca.pem
     nexus-ca.pem
@@ -227,10 +221,10 @@ The three `COPY` instructions for the certificates in the Dockerfile are the one
 
 Nothing personal or secret lives inside this repository:
 - `AGENT_HOMES_DIR` (default `$HOME/.claude-agent-homes`), one subfolder per profile, holds Claude Code's own state (session history, local configuration), plus a shared `CLAUDE.user.md` at its root (see "A personal preference" above).
-- `AGENT_ENV_FILE` (default `$AGENT_HOMES_DIR/.env`) holds the real Claude Code token; only `.env.example`, with a placeholder, is committed here.
+- `AGENT_ENV_FILE` (default `$AGENT_HOMES_DIR/.env`) holds the real Claude Code token, the Git tokens, and, when GitHub is used, the agent account's GitHub API token and commit email; only `.env.example`, with placeholders, is committed here.
 - `SHARED_BASE_DIR` (default `~/.agents/shared`, where this very file lives) holds ad-hoc documents shared with the agent, outside any project repository.
 
-With no secret and no personal state ever placed inside it, this repository needs no `.gitignore` at all. The image and the launch mechanism (Dockerfile, entrypoint.sh, `_claude_agent`) could serve a different project unchanged; the profiles themselves (`CLAUDE.md`, `rules/`, `skills/`, `docs/`) would not, since they hold SpiGes-specific content.
+With no secret and no personal state ever placed inside it, this repository needs no `.gitignore` at all. The image and the launch mechanism (Dockerfile, entrypoint.sh, launch.sh) could serve a different project unchanged; the profiles themselves (`CLAUDE.md`, `rules/`, `skills/`, `docs/`) would not, since they hold SpiGes-specific content.
 
 ## Troubleshooting
 
