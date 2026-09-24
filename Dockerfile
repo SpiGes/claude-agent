@@ -79,6 +79,20 @@ COPY certs/nexus-ca.pem /usr/local/share/ca-certificates/nexus-ca.crt
 COPY certs/swissgov-root.cer /usr/local/share/ca-certificates/swissgov-root.crt
 RUN update-ca-certificates
 
+# GitHub CLI (`gh`), used by the agent for GitHub API actions (issues, pull requests), authenticated
+# through GH_TOKEN (.env). Installed from GitHub's official apt repository, after the corporate CA
+# certificates above so the download works behind the proxy. Deliberately not wired into git
+# (no `gh auth setup-git`): git operations keep their own dedicated PAT (GIT_CONFIG_*).
+RUN mkdir -p -m 755 /etc/apt/keyrings \
+    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+        > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends gh \
+    && rm -rf /var/lib/apt/lists/*
+
 ENV PIPX_HOME=/opt/pipx
 ENV PIPX_BIN_DIR=/usr/local/bin
 
