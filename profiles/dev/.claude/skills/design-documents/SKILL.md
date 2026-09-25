@@ -3,13 +3,71 @@ name: design-documents
 description: Write or update a design document, following a defined methodology (deferred vs open points, chapter structure, text density). Use when the user explicitly asks for a design document, a technical specification, or a similar formal write-up.
 ---
 
-# Design documents — general methodology
+# Design documents
 
-- Use a canvas/Artifact; write only one authoritative version in it, updated through targeted edits rather than full regeneration.
-- Style: simple technical English with a maximum B2 level, neutral and human-like, passive form preferred, class/method/enum names in italics, ASCII characters as much as possible, no trailing punctuation in bulleted or numbered lists.
-- A table of contents must not be written or maintained by hand, because it becomes wrong as soon as a chapter is added or renamed — it is expected to come from the publishing platform or a generator at delivery time.
-- Chapters must be numbered (e.g. `## 4. Scope`), because the numbers are used to navigate and to refer to a chapter during a review. Sub-sections aren't numbered. When a chapter is inserted or removed, all the following chapters must be renumbered.
-- A chapter that carries no content for a given feature may be omitted, except `Purpose` and the design point chapters.
+## Document location and files
+
+- A design document is a Markdown file versioned in the specs repository, updated through
+  targeted edits rather than full regeneration.
+- Each document has its own folder, grouped by area (e.g. `design/export/export-process/itark-process/`),
+  and is named `spec.md`. A document split into sub-documents keeps one `spec.md` per folder
+  (e.g. `design/updates-via-email/spec.md`, `design/updates-via-email/events/spec.md`).
+- The images of a document are stored in a `resources/` folder next to its `spec.md` (see
+  "Image files in design documents" in the `diagrams` skill).
+
+## General rules
+
+- Style: simple technical English with a maximum B2 level, neutral and human-like, passive form
+  preferred, class/method/enum names in italics, ASCII characters as much as possible, no
+  trailing punctuation in bulleted or numbered lists.
+- The document starts with a single top-level title (`# <title>`); chapters are level-2 headings.
+- A table of contents must not be written or maintained by hand, because it becomes wrong as soon
+  as a chapter is added or renamed — it is expected to come from the publishing platform or a
+  generator at delivery time.
+- Chapters must be numbered (e.g. `## 4. Scope`), because the numbers are used to navigate and to
+  refer to a chapter during a review. Sub-sections aren't numbered. When a chapter is inserted or
+  removed, all the following chapters are renumbered, together with every reference to a chapter
+  number in the text (e.g. "described in chapter 5").
+- A chapter that carries no content for a given feature may be omitted, except `Versions`,
+  `Purpose`, and the design point chapters.
+
+## Default structure
+
+Unless another structure is explicitly requested, a design document is organized as follows:
+1. Versions
+2. References
+3. Purpose
+4. Scope
+5. Solution overview
+6. one chapter per design point to resolve
+7. Changes to the existing system
+8. Configuration
+9. Deferred design points
+10. Open points
+11. Static diagrams
+12. Dynamic diagrams
+
+Expected content of those chapters:
+- `Versions` is a table with the version, the date, and a short description of the change,
+  tracking the releases of the document and not the iterations of its writing, so no line is
+  added while a version is still being elaborated. Its columns are `Version | Date | Details`,
+  with dates written `YYYY.MM.DD`. Every document has its own `Versions` chapter, sub-documents
+  included; a parent document's table describes the changes of the parent document only, not
+  those of its sub-documents.
+- `References` lists the work items, the related design documents, and the external sources.
+- `Purpose` explains what the feature does and why it is needed, without describing the solution.
+- `Scope` states what is covered and, above all, what is left out.
+- `Solution overview` describes the retained solution as a whole, in about half a page, so that
+  the following chapters can be read in any order.
+- the design point chapters carry the substance of the document.
+- `Changes to the existing system` lists the existing code and behavior that are modified, with
+  the associated risk and the way back.
+- `Configuration` describes all new parameters, with their meaning and their default value.
+- `Deferred design points` lists the points that are decided but not implemented in the first
+  version.
+- `Open points` lists the questions that are still open, which are mostly business decisions.
+- the two diagram chapters carry the diagrams of the design, written and rendered to their
+  images following the `diagrams` skill.
 
 ## Deferred design points vs. open points
 
@@ -55,64 +113,7 @@ affirmative.
 If important information is missing and prevents a precise design explanation, ask targeted
 clarifying questions.
 
-# SpiGes specs — project instructions
+## Diagrams
 
-SpiGes is a service of the SIS microservice infrastructure: Angular/ngrx frontend, ASP.NET Core backend, PostgreSQL + Oracle persistence. This repository (SIS-SpiGes-Specs) versions the design specs and related documents for both the backend (SIS-SpiGes) and the frontend (SIS-SpiGes-UI).
-
-## Reference material (read on demand, not preloaded)
-
-- `.claude/docs/SPIGES_SOLUTION_CONTEXT.md` — architecture and business domain hierarchy (`Unit` / `BurGesv` / `EntId` / `UnitDescriptor` / `GroupType` / wave year). This knowledge is not derivable from the code alone; the same file is also kept in the backend and frontend repositories, since it applies to all three.
-- `.claude/docs/SPIGES_REQUEST_TEMPLATE.md` — preferred format for a feature/analysis/review request, when the user wants to write one explicitly (optional; a short, well-scoped request is usually enough). Describes how to phrase a request, not the code itself, so it is not derivable from the code; the same file is also kept in the backend and frontend repositories, since a request can span more than one of them.
-
-## Default technical scope
-
-- Documentation / static site: Hugo-Extended, Docsy.
-
-## Diagrams — SpiGes-specific
-
-- Use current Mermaid syntax without restriction, since the code is only rendered by the claude.ai preview and by mermaid.live, which both follow the latest version.
-- A diagram that uses subgraphs should start with the directive
-  `%%{init: {'themeVariables': {'clusterBkg': 'transparent', 'clusterBorder': '#9e9e9e'}}}%%`,
-  which removes the default background of the blocks and keeps only their border. No theme is
-  fixed, so the rendering still follows the light or dark mode of the viewer.
-- A Markdown image reference to the exported diagram must be added right after the code
-  block, so the diagram also appears where Mermaid isn't rendered (e.g. Confluence). The
-  image is placed in a folder named after the document, with a file name of the form
-  `diagram-01-short-name.png`, and the spaces of the path are written as `%20` in the
-  reference.
-- For UML-style diagrams describing backend types: do not display `CancellationToken`; do
-  not display `Task` (use the underlying type, or nothing if void); omit member/variable
-  types unless omitting them would create ambiguity.
-
-## Design documents — default structure
-
-Unless another structure is explicitly requested, organize a design document as follows:
-1. Versions
-2. References
-3. Purpose
-4. Scope
-5. Solution overview
-6. one chapter per design point to resolve
-7. Changes to the existing system
-8. Configuration
-9. Deferred design points
-10. Open points
-11. Static diagrams
-12. Dynamic diagrams
-
-Expected content of those chapters:
-- `Versions` is a table with the version, the date, and a short description of the change, tracking the releases of the document and not the iterations of its writing, so no line is added while a version is still being elaborated.
-- `References` lists the work items, the related design documents, and the external sources.
-- `Purpose` explains what the feature does and why it is needed, without describing the solution.
-- `Scope` states what is covered and, above all, what is left out.
-- `Solution overview` describes the retained solution as a whole, in about half a page, so that the following chapters can be read in any order.
-- the design point chapters carry the substance of the document.
-- `Changes to the existing system` lists the existing code and behavior that are modified, with the associated risk and the way back.
-- `Configuration` describes all new parameters, with their meaning and their default value.
-- `Deferred design points` lists the points that are decided but not implemented in the first version.
-- `Open points` lists the questions that are still open, which are mostly business decisions.
-- the two diagram chapters are left empty, because diagrams are generated separately.
-
-This structure follows the same deferred-vs-open distinction and general design-document
-methodology described in the generic `design-documents` skill at the agent level; only the
-chapter list above is SpiGes-specific.
+Diagrams follow the `diagrams` skill, including the rendering of each diagram to the image
+referenced in the document.

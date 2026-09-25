@@ -52,9 +52,11 @@ To save tokens, prefer these over a full Read + manual scan/edit when they fit:
   needed.
 - `mmdc` (`@mermaid-js/mermaid-cli`) — renders Mermaid diagram code to PNG/SVG/PDF. Requires
   passing a Puppeteer config file with `--no-sandbox`, since the container has no
-  unprivileged user namespaces for Chromium's own sandbox:
-  `echo '{ "args": ["--no-sandbox"] }' > puppeteer-config.json && mmdc -i diagram.mmd -o diagram.png -p puppeteer-config.json`.
-  Without `--no-sandbox`, the browser launch fails with "No usable sandbox!".
+  unprivileged user namespaces for Chromium's own sandbox; the config file is written outside
+  the repository, so it is never committed by mistake:
+  `echo '{ "args": ["--no-sandbox"] }' > /tmp/puppeteer-config.json && mmdc -i diagram.mmd -o diagram.png -p /tmp/puppeteer-config.json`.
+  Without `--no-sandbox`, the browser launch fails with "No usable sandbox!". For diagrams in a
+  design document, see "Rendering to images" in the `diagrams` skill.
 
 ## Design documents
 
