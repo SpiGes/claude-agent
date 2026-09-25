@@ -146,11 +146,12 @@ RUN git config --system --add safe.directory /backend && \
     git config --system user.name "Claude Agent" && \
     git config --system user.email "claude-agent@spiges.local"
 
-# GitHub-specific authorship, applied only to repositories with a github.com remote, so that
-# commits are linked to the person's own GitHub agent account through its noreply address.
-# The included file is generated at startup by entrypoint.sh from GITHUB_COMMIT_EMAIL (.env);
-# when it is absent, git ignores the include and the default authorship above applies.
-# Repositories on the Azure DevOps Server always keep the default authorship.
-RUN git config --system includeIf."hasconfig:remote.*.url:https://github.com/**".path /tmp/gitconfig-github
+# Per-server authorship, each applied only to repositories whose remote is on that server:
+# - Azure DevOps Server: the person's own agent identity (DEVOPS_COMMIT_NAME/EMAIL, .env)
+# - GitHub: the person's GitHub agent account identity (GITHUB_COMMIT_NAME/EMAIL, .env)
+# The included files are generated at startup by entrypoint.sh, which also refuses to start when
+# a required variable is missing. The default authorship above only remains for other servers.
+RUN git config --system includeIf."hasconfig:remote.*.url:https://devops-server.admin.ch/**".path /tmp/gitconfig-devops && \
+    git config --system includeIf."hasconfig:remote.*.url:https://github.com/**".path /tmp/gitconfig-github
 
 WORKDIR /workspace

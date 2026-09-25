@@ -44,11 +44,12 @@ cp ~/.agents/bfs-claude-agent/.env.example ~/.claude-agent-homes/.env
 
 Generate the Claude Code token (a URL is shown, to be opened in a browser for login):
 ```bash
-docker run -it --rm bfs-claude-agent claude setup-token
+docker run -it --rm --entrypoint claude bfs-claude-agent setup-token
 ```
 Then, in `~/.claude-agent-homes/.env`, replace the placeholders of:
 - `CLAUDE_CODE_OAUTH_TOKEN`, with the generated token;
-- `GIT_CONFIG_VALUE_0`, with the Azure DevOps Git token from the Prerequisites, base64-encoded as shown in the file.
+- `GIT_CONFIG_VALUE_0`, with the Azure DevOps Git token from the Prerequisites, base64-encoded as shown in the file;
+- `DEVOPS_COMMIT_NAME` and `DEVOPS_COMMIT_EMAIL`, with the authorship of the agent's commits on the Azure DevOps Server, chosen by each person (e.g. `Claude Agent (Firstname Lastname)` and `firstname.lastname+agent-dev@example.org`).
 
 The GitHub lines stay commented out unless "Optional: GitHub access" below is set up.
 
@@ -72,6 +73,8 @@ claude_dev
 - **The folders of Step 3 are created by hand**, before the first launch, so that Docker does not create them itself with the wrong owner.
 - **Git authenticates through environment variables only** (`GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_<n>`, `GIT_CONFIG_VALUE_<n>`): each entry adds an `Authorization` header for one server only, so the container needs no `.ssh` mount, no private key, and no credential file. They reach the container through `--env-file`, like `CLAUDE_CODE_OAUTH_TOKEN`. The full setup guide (Chapter 3) documents the equivalent, one-time setup for the WSL2 host itself, needed for the person's own `git` operations outside the container.
 - **`docker --env-file` keeps every character after `=` as is**, trailing spaces and Windows line endings (`\r`) included. A value copied with either of them may break silently.
+- **The commit authorship is set per Git server**, through the same pair of variables for each one: `<PREFIX>_COMMIT_NAME` and `<PREFIX>_COMMIT_EMAIL`, with `DEVOPS` for the Azure DevOps Server and `GITHUB` for GitHub. At startup, `entrypoint.sh` writes each pair into `/tmp/gitconfig-<server>`, which the system Git configuration includes only for repositories whose remote is on that server. The container refuses to start, with an explicit message, when a pair of a server in use is missing, or when a value starts or ends with a space or a Windows line ending. Repositories on any other server keep the default `Claude Agent <claude-agent@spiges.local>` authorship.
+- **`claude setup-token` (Step 4) is run with `--entrypoint claude`**, which bypasses `entrypoint.sh`: the token is generated before the `.env` file is filled in, so the authorship checks would otherwise refuse to start.
 - **`launch.sh` is sourced, not copied**, so a plain `git pull` on this repository updates the launch functions at the next shell start. It defines `claude_dev`, `claude_dev_bash`, and `claude_qualitycheck` (see Usage), on top of `_claude_agent`, which runs the container for a given profile.
 - **Every path is overridable**: `AGENT_HOMES_DIR`, `AGENT_ENV_FILE` (default `$AGENT_HOMES_DIR/.env`), `SHARED_BASE_DIR` (default `~/.agents/shared`), and `AGENT_USER_FILE` (default `$AGENT_HOMES_DIR/CLAUDE.user.md`) can be exported in `~/.bashrc` before `launch.sh` is sourced. `AGENT_BASE_DIR` defaults to the folder `launch.sh` itself lives in, so this repository can be cloned anywhere.
 - **The workspace is whatever folder is current when the function is called**, not a fixed path baked into the function. Move into the repository (or, for a task spanning several, into the parent folder holding them side by side, see "Working across several repositories" below) before running `claude_dev`.
@@ -105,18 +108,19 @@ Metadata: Read-only is added by GitHub automatically; every other permission, in
 
 ### `.env` file
 
-The four GitHub lines of `.env.example` are uncommented, and `GIT_CONFIG_COUNT` is raised to 2; with it left at 1, Git silently ignores the GitHub entry:
+The five GitHub lines of `.env.example` are uncommented, and `GIT_CONFIG_COUNT` is raised to 2; with it left at 1, Git silently ignores the GitHub entry:
 ```
 GIT_CONFIG_COUNT=2
 GIT_CONFIG_KEY_0=http.https://devops-server.admin.ch.extraHeader
 GIT_CONFIG_VALUE_0=Authorization: Basic <Azure DevOps PAT in base64>
 GIT_CONFIG_KEY_1=http.https://github.com/.extraHeader
 GIT_CONFIG_VALUE_1=Authorization: Basic <GitHub Git token in base64, e.g. via printf 'x-access-token:%s' '<PAT>' | base64 -w0>
+GITHUB_COMMIT_NAME=<agent name, e.g. Claude Agent (Firstname Lastname)>
 GITHUB_COMMIT_EMAIL=<ID>+<login>@users.noreply.github.com
 GH_TOKEN=<GitHub API token, plain, no base64>
 ```
 - `GIT_CONFIG_VALUE_1` applies only to `https://github.com/` URLs, so the Azure DevOps token and the GitHub token never reach the wrong server.
-- `GITHUB_COMMIT_EMAIL` is the agent account's noreply address, shown in its Settings, Emails when "Keep my email addresses private" is enabled; its numeric part is the account's permanent ID, which keeps commits linked to the account even after a rename. At startup, `entrypoint.sh` writes it into `/tmp/gitconfig-github`, which the system Git configuration includes only for repositories with a `github.com` remote. Repositories on the Azure DevOps Server keep the default `Claude Agent <claude-agent@spiges.local>` authorship; without this variable, GitHub repositories keep it too, and their commits are not linked to any GitHub account.
+- `GITHUB_COMMIT_NAME` and `GITHUB_COMMIT_EMAIL` are the authorship of the agent's commits on GitHub, handled like the Azure DevOps pair (see "Installation details"), and required once the GitHub Git token is enabled. The email is the agent account's noreply address, shown in its Settings, Emails when "Keep my email addresses private" is enabled; its numeric part is the account's permanent ID, which keeps commits linked to the account even after a rename. GitHub links commits to the account through the email only; the name is displayed as is.
 - `GH_TOKEN` is read directly by the GitHub CLI (`gh`), with no `gh auth login` needed. `gh` is deliberately not wired into Git (no `gh auth setup-git`), so that Git keeps using its own token only.
 
 Reading the tokens with `read -rs` and appending them with `printf`, rather than pasting them into an editor, avoids stray spaces and `\r`, and keeps them out of the shell history.
