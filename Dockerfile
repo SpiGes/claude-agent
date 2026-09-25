@@ -121,9 +121,9 @@ RUN npm install -g @anthropic-ai/claude-code
 # even as more (non-self-updating) global packages are added below.
 RUN chmod -R 777 $(npm root -g)/@anthropic-ai $(npm config get prefix)/bin
 # Structural code search across C#/TypeScript, matches syntax rather than plain text.
-RUN npm install -g @ast-grep/cli
+RUN npm install -g @ast-grep/cli@0.45.3
 # Renders Mermaid diagram code to PNG/SVG/PDF (`mmdc`).
-RUN npm install -g @mermaid-js/mermaid-cli
+RUN npm install -g @mermaid-js/mermaid-cli@11.17.0
 
 # Container entrypoint script.
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
