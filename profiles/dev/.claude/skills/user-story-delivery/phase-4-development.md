@@ -8,10 +8,12 @@ can review.
 - The branch is named `feature/RC_<user story>_<short_description>` and is based on the up-to-date
   target branch (usually `origin/master`).
 - When a worktree is used, it's created next to the main checkout (e.g. `/workspace/backend/RC_<user
-  story>`). Its `.git` file is then rewritten with a relative path (e.g.
+  story>`). Its `.git` file must hold a relative path (e.g.
   `gitdir: ../branch/.git/worktrees/RC_<user story>`), otherwise the user's editor can't find the
-  repository. The branch can't be selected in the main checkout while the worktree exists: the user
-  opens the worktree folder instead.
+  repository. The image sets `worktree.useRelativePaths=true` (git 2.48 or higher), so this is only
+  checked after `git worktree add`; the file is rewritten by hand only when the path is absolute.
+  The branch can't be selected in the main checkout while the worktree exists: the user opens the
+  worktree folder instead.
 
 ## For each task
 
