@@ -57,6 +57,16 @@ To save tokens, prefer these over a full Read + manual scan/edit when they fit:
   `echo '{ "args": ["--no-sandbox"] }' > /tmp/puppeteer-config.json && mmdc -i diagram.mmd -o diagram.png -p /tmp/puppeteer-config.json`.
   Without `--no-sandbox`, the browser launch fails with "No usable sandbox!". For diagrams in a
   design document, see "Rendering to images" in the `diagrams` skill.
+- `file` / `dos2unix` / `unix2dos` — check and fix line endings and encoding. If files are
+  CRLF: after a file is rewritten by a script (Python, `sed`, heredoc) rather than the Edit tool,
+  its line endings are checked with `file <path>` and restored with `unix2dos <path>` when needed.
+  `xxd <path> | head -1` shows the first bytes (e.g. a UTF-8 BOM).
+- `python3` with `openpyxl` — inspect an Excel workbook (worksheets and their visibility, defined
+  names, cell values) in a few lines, instead of writing a throwaway .NET project.
+- `reportgenerator` — turns the coverlet output of the nunit tests into a readable coverage report,
+  when coverage is measured:
+  `dotnet test <project> -p:NuGetAudit=false --collect:"XPlat Code Coverage"` then
+  `reportgenerator -reports:"**/coverage.cobertura.xml" -targetdir:<scratchpad>/coverage -reporttypes:TextSummary`.
 
 ## Design documents
 
