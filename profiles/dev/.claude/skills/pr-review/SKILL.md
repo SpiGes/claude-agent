@@ -1,6 +1,6 @@
 ---
 name: pr-review
-description: Review a pull request hosted on Azure DevOps or GitHub (optionally with its linked work item or issue), write the review to a Markdown file in /shared, then, after the user has selected the findings to keep, write succinct PR comments to a second file, and publish them only when the user says so. Use when the user asks for a review of a pull request by number or URL (e.g. "fais une review de la PR 43901"). Not for reviewing the local diff, which is covered by the code-review skill.
+description: Review a pull request hosted on Azure DevOps or GitHub (optionally with its linked work item or issue), write the review to a Markdown file in /shared, then, after the user has selected the findings to keep, write succinct PR comments to a second file, and publish them only when the user says so. Use when the user asks for a review of a pull request by number or URL (e.g. "review of PR 43901", "fais une review de la PR 43901"). Not for reviewing the local diff, which is covered by the code-review skill.
 ---
 
 # Pull request review
@@ -48,6 +48,10 @@ When neither the URL nor the repository makes it clear, the user is asked.
 - The full diff is saved in the scratchpad directory and read completely, not sampled.
 - Every point that is flagged is checked against the complete file at the head of the pull request,
   not only against the diff hunk.
+- When the workspace holds a specs repository (e.g. `specs/branch`), the design of the feature and
+  the architecture documents it relies on (e.g. a shared mechanism such as a distributed lock) are
+  searched there and read before the findings are written. The change is checked against them, and
+  a deviation from the design is stated as such.
 
 ### Two habits that are always applied
 
@@ -90,6 +94,12 @@ The user selects the findings to keep (e.g. "je retiens 3.1, 3.2 et 3.4"), and m
 to the review file. No comment is written before this selection. When the review file is
 regenerated with the selected findings only, the new numbering is given to the user.
 
+The review file is kept up to date during the whole selection and the discussion around it, not
+only at the end. As soon as a finding is withdrawn, reworded, re-rated, or added (e.g. after an
+explanation from the user, or a document found later), the review file is changed accordingly, so
+that it always matches what will be commented. The numbering of the existing findings is kept, and
+a new finding takes the next free number.
+
 ## Step 3 - Comments file
 
 The comments are written to `/shared/pr-<id>-comments.md`, one per selected finding, plus a general
@@ -104,8 +114,15 @@ comment when a finding doesn't belong to a specific line.
 - The text of each comment is written in a fenced `markdown` block (four backticks when the comment
   contains a code block), exactly as it will appear in the pull request.
 - Comments are written in English.
-- Comments are succinct and go to the point: two to four lines, no thanks, no restating of the root
-  cause or of the review, one concrete suggestion or question.
+- Comments are succinct and go to the point: one to three lines, no thanks, no restating of the root
+  cause or of the review. A trivial finding takes a single line (e.g. "`[ExcludeFromCodeCoverage]`
+  missing").
+- A comment states the problem and the expected change directly, as a statement or an imperative
+  (e.g. "Remove the `IValidator` injection and this block.", "Please use `IsInEnum()` for
+  `Category` and `Frequency`."), never as a question (e.g. "Could ... be ...?", "Use ...?").
+- A comment doesn't reference a design document, a user story, or a task explicitly (no file path,
+  chapter number, or work item number). A generic mention such as "the design" is enough when
+  needed; the explicit references stay in the review file.
 
 The user may then edit the file.
 
