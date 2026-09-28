@@ -2,7 +2,9 @@
 FROM node@sha256:a9f5f7c91a432850b2a8a7797adf5eadb6c733ceed61167806cee7ea7fbc29df AS node-source
 
 # Base image: .NET SDK, needed to build/test the backend (ASP.NET Core, PostgreSQL, Oracle).
-FROM mcr.microsoft.com/dotnet/sdk:10.0
+# The Ubuntu release (noble = 24.04) is pinned in the tag, so that it only changes on purpose
+# (the git PPA below also targets noble).
+FROM mcr.microsoft.com/dotnet/sdk:10.0-noble
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -11,14 +13,22 @@ RUN apt-get update \
         curl \
         # GPG, used to verify signed packages/keys.
         gnupg \
-        # Version control, used by the agent to interact with the repositories.
-        git \
         # Command-line JSON processor.
         jq \
+        # Line ending conversion (`dos2unix`/`unix2dos`), used to keep the CRLF files of the backend
+        # unchanged after an edit.
+        dos2unix \
+        # File type, encoding and line ending detection (e.g. BOM, CRLF checks).
+        file \
+        # Hex dump (`xxd`), used to inspect the first bytes of a file (e.g. BOM).
+        xxd \
         # Python runtime, required by pipx and other Python-based tools.
         python3 \
         # Python package installer, dependency of pipx.
         python3-pip \
+        # Excel (.xlsx) reading/writing from Python, used to inspect workbooks (e.g. ITAR_K
+        # templates: defined names, hidden worksheets, cell values) without a .NET project.
+        python3-openpyxl \
         # Installs Python CLI applications in isolated virtual environments (see pipx installs below).
         pipx \
         # Fast text search (`rg`), preferred default for plain-text search.
@@ -93,6 +103,31 @@ RUN mkdir -p -m 755 /etc/apt/keyrings \
     && apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/*
 
+# Git, from the "Ubuntu Git Maintainers" PPA instead of the Ubuntu archive: Ubuntu 24.04 provides
+# git 2.43, while 2.48 or higher is needed to create worktrees with relative paths
+# (worktree.useRelativePaths, set below). With absolute paths, the worktrees can't be opened from
+# the host (e.g. in VSCode), since the container paths don't exist there. The PPA signing key is
+# checked against its fingerprint; the build fails if the installed git is older than 2.48.
+# The fingerprint is a public value, kept in a shell variable rather than an ARG, which the
+# Dockerfile linter would report as a secret (SecretsUsedInArgOrEnv).
+RUN fingerprint=E1DD270288B4E6030699E45FA1715D88E1DF1F24 \
+    && curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&options=mr&search=0x${fingerprint}" \
+        | gpg --dearmor -o /etc/apt/keyrings/git-core-ppa.gpg \
+    && gpg --show-keys --with-colons /etc/apt/keyrings/git-core-ppa.gpg \
+        | grep -q "^fpr:::::::::${fingerprint}:" \
+    && chmod go+r /etc/apt/keyrings/git-core-ppa.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/git-core-ppa.gpg] https://ppa.launchpadcontent.net/git-core/ppa/ubuntu noble main" \
+        > /etc/apt/sources.list.d/git-core-ppa.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/* \
+    && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' git)" ge "1:2.48"
+
+# Code coverage report generator (`reportgenerator`), turns the coverlet output of the backend
+# tests into a readable report per file.
+RUN dotnet tool install dotnet-reportgenerator-globaltool --version 5.5.11 --tool-path /opt/dotnet-tools \
+    && ln -s /opt/dotnet-tools/reportgenerator /usr/local/bin/reportgenerator
+
 ENV PIPX_HOME=/opt/pipx
 ENV PIPX_BIN_DIR=/usr/local/bin
 
@@ -143,6 +178,7 @@ ENV SSL_CERT_DIR=/etc/ssl/certs
 # Git safety and default authorship for commits made by the agent.
 RUN git config --system --add safe.directory /backend && \
     git config --system core.fileMode false && \
+    git config --system worktree.useRelativePaths true && \
     git config --system user.name "Claude Agent" && \
     git config --system user.email "claude-agent@spiges.local"
 
