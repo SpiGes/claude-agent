@@ -47,6 +47,20 @@ can review.
 3. Files changed by the build but not part of the work (e.g. a regenerated API client) aren't
    committed; they're reported to the user.
 
+## Review of the pull request
+
+1. The review comments are read with `devops_pull_request_list_threads`, and each one is discussed with
+   the user before any change.
+2. The fixes are committed under the task they belong to. A change that goes beyond the task gets its
+   own task under the user story, created after the user's agreement.
+3. Each comment is answered, in english:
+   - "Done" or "Fixed", depending on the case, with a short explanation only when the change is complex
+   - when the comment isn't addressed, the reason
+   - no commit is mentioned (hash or message), since the hashes change with each rebase
+4. The thread status is set accordingly: Fixed for an applied change, Pending for a change waiting for
+   a decision, Won't fix for a comment that isn't addressed.
+5. The branch is pushed after the fixes; the replies are posted once the push is done.
+
 ## End of the phase
 
 The pull request link is given. On the user's request, the development tasks are closed. The
