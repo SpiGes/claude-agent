@@ -6,12 +6,14 @@
       "Bash(dotnet restore:*)",
       "Bash(dotnet test:*)",
       "Bash(npm run *)",
+      "Bash(git fetch:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
       "Bash(git status)",
       "Bash(git diff:*)",
       "Bash(git log:*)"
     ],
     "ask": [
-      "Bash(git commit:*)",
       "Bash(git push:*)",
       "mcp__confluence__confluence_create*",
       "mcp__confluence__confluence_copy*",
