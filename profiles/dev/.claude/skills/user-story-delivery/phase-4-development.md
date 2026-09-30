@@ -23,11 +23,21 @@ can review.
 3. Unit tests are written following `testing.md`. Integration tests are added when the project has
    a test for the same flow (e.g. real test files under `Resources/`). Existing tests broken by the
    change are adapted, and the reason is given.
-4. The full test project of the module is run, not only the new tests (backend: always with
+4. When the task changes the gitops repository, the compatibility with every environment is checked
+   before the commit:
+   - the `imageTag` of each `values-<env>.yaml` shows which build runs where (master release, pull
+     request build, feature or epic branch)
+   - a setting that refers to types or code of an epic (e.g. new enum keys in a mapping) is treated as
+     breaking for the environments that don't run that epic, even when master seems to know these
+     types (they may be a leftover of a bad merge), and is restricted to the environments running the
+     epic
+   - the chart is rendered with `helm template` for each environment and compared with `origin/main`:
+     only the intended environments change
+5. The full test project of the module is run, not only the new tests (backend: always with
    `-p:NuGetAudit=false`).
-5. A recap is given: what was done, deviations from the design (with a proposal), risks, and what
+6. A recap is given: what was done, deviations from the design (with a proposal), risks, and what
    isn't covered by the tests. The user is asked before committing.
-6. One commit per task, following the commit conventions. When a commit turns out to contain the
+7. One commit per task, following the commit conventions. When a commit turns out to contain the
    work of another task, it's split before push, after the user's agreement.
 
 ## Testing honestly
@@ -44,6 +54,8 @@ can review.
    user story and to the development tasks, with the chapters:
    - Context: the need, and the design document
    - Main Changes: grouped by task, including compatibility and what isn't covered yet
+   - Compatibility: what changes per environment (gitops), deployment order between the backend and
+     the gitops change, and the settings restricted to some environments
 3. Files changed by the build but not part of the work (e.g. a regenerated API client) aren't
    committed; they're reported to the user.
 
