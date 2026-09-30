@@ -14,6 +14,11 @@ Goal: a design document, based on the functional specification, validated by the
    `design-documents` skill.
 5. The chapter "Modifications to existing" lists the impacts, their risk, and their mitigation,
    in particular on the behaviour that must stay unchanged.
+6. For each configuration setting the flow depends on (output format, feature flag, mapping, limit),
+   its value is compared in the backend `appsettings.json` and in the Helm settings of each
+   environment. A setting whose values lead to different behaviours (e.g. an output format that
+   produces one file or several) is a design point: the supported values are decided and written
+   down, and the behaviour for the other values is defined.
 
 ## Rules
 
