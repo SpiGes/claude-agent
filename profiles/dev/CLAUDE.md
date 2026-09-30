@@ -61,12 +61,29 @@ To save tokens, prefer these over a full Read + manual scan/edit when they fit:
   CRLF: after a file is rewritten by a script (Python, `sed`, heredoc) rather than the Edit tool,
   its line endings are checked with `file <path>` and restored with `unix2dos <path>` when needed.
   `xxd <path> | head -1` shows the first bytes (e.g. a UTF-8 BOM).
+  When a CRLF file is edited from Python, it's read and written with `newline=''`: the default
+  newline translation turns `\r\n` into `\n` on read, so a replacement containing `\r\n` silently
+  matches nothing.
 - `python3` with `openpyxl` — inspect an Excel workbook (worksheets and their visibility, defined
   names, cell values) in a few lines, instead of writing a throwaway .NET project.
 - `reportgenerator` — turns the coverlet output of the nunit tests into a readable coverage report,
   when coverage is measured:
   `dotnet test <project> -p:NuGetAudit=false --collect:"XPlat Code Coverage"` then
   `reportgenerator -reports:"**/coverage.cobertura.xml" -targetdir:<scratchpad>/coverage -reporttypes:TextSummary`.
+- `helm` — renders a chart of the gitops repository for one environment, to check a change before it's
+  pushed:
+  `helm template spiges spiges/helm -f spiges/helm/values.yaml -f spiges/helm/values-<env>.yaml --show-only templates/appsettings.yaml`.
+  To check that only the intended environments change, the same chart is rendered from `origin/main`
+  (`git archive origin/main spiges/helm | tar -x -C <scratchpad>`), and the two renderings are diffed for
+  each environment. No cluster access is configured: only `template` is useful.
+- `ilspycmd` — decompiles a type of a NuGet package, when the behaviour of a library must be checked
+  rather than assumed (retry, default values, filter order):
+  `ilspycmd -t <Namespace.Type> ~/.nuget/packages/<package>/<version>/lib/<tfm>/<assembly>.dll`.
+- `json5` — reads a JSON file with comments and a BOM (e.g. the backend `appsettings.json`) and prints
+  plain JSON, to pipe to `jq`: `json5 appsettings.json | jq '.SpiGes.SurveyPartDatabaseTableNameMapping'`.
+  Preferred over hand-written regexes to strip `//` and `/* */` comments.
+- `python3` with `yaml` (PyYAML) — reads a rendered Helm manifest or a values file in a script, when `yq`
+  alone isn't enough.
 
 ## Design documents
 
