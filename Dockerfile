@@ -22,6 +22,8 @@ RUN apt-get update \
         file \
         # Hex dump (`xxd`), used to inspect the first bytes of a file (e.g. BOM).
         xxd \
+        # Binary inspection tools (e.g. `strings`, to look for a name in a compiled assembly).
+        binutils \
         # Python runtime, required by pipx and other Python-based tools.
         python3 \
         # Python package installer, dependency of pipx.
@@ -29,6 +31,8 @@ RUN apt-get update \
         # Excel (.xlsx) reading/writing from Python, used to inspect workbooks (e.g. ITAR_K
         # templates: defined names, hidden worksheets, cell values) without a .NET project.
         python3-openpyxl \
+        # YAML reading from Python, used to process a rendered Helm manifest or a values file in a script.
+        python3-yaml \
         # Installs Python CLI applications in isolated virtual environments (see pipx installs below).
         pipx \
         # Fast text search (`rg`), preferred default for plain-text search.
@@ -128,6 +132,24 @@ RUN fingerprint=E1DD270288B4E6030699E45FA1715D88E1DF1F24 \
 RUN dotnet tool install dotnet-reportgenerator-globaltool --version 5.5.11 --tool-path /opt/dotnet-tools \
     && ln -s /opt/dotnet-tools/reportgenerator /usr/local/bin/reportgenerator
 
+# .NET decompiler (`ilspycmd`), used to read the code of a NuGet package (e.g.
+# `ilspycmd -t <Namespace.Type> ~/.nuget/packages/<package>/<version>/lib/<tfm>/<assembly>.dll`) when the
+# behaviour of a library must be checked rather than assumed.
+RUN dotnet tool install ilspycmd --version 11.1.0.9782 --tool-path /opt/dotnet-tools \
+    && ln -s /opt/dotnet-tools/ilspycmd /usr/local/bin/ilspycmd
+
+# Helm (`helm template`), renders the charts of the gitops repository per environment
+# (values-<env>.yaml), to check a change before it's pushed. Only the client binary is used: no
+# cluster access is configured. The archive is checked against its published SHA-256, kept in a
+# shell variable for the same linter reason as the git PPA fingerprint below.
+RUN helm_version=v3.22.0 \
+    && helm_sha256=1e4ab49e429626cf6c6958d914248b78c9730803c2751b87627e171dc800e7bb \
+    && curl -fsSL -o /tmp/helm.tgz "https://get.helm.sh/helm-${helm_version}-linux-amd64.tar.gz" \
+    && echo "${helm_sha256}  /tmp/helm.tgz" | sha256sum -c - \
+    && tar -xzf /tmp/helm.tgz -C /tmp linux-amd64/helm \
+    && install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm \
+    && rm -rf /tmp/helm.tgz /tmp/linux-amd64
+
 ENV PIPX_HOME=/opt/pipx
 ENV PIPX_BIN_DIR=/usr/local/bin
 
@@ -159,6 +181,9 @@ RUN chmod -R 777 $(npm root -g)/@anthropic-ai $(npm config get prefix)/bin
 RUN npm install -g @ast-grep/cli@0.45.3
 # Renders Mermaid diagram code to PNG/SVG/PDF (`mmdc`).
 RUN npm install -g @mermaid-js/mermaid-cli@11.17.0
+# JSON5 parser (`json5 <file>` prints plain JSON), used to read JSON files with comments and a BOM
+# (e.g. the backend appsettings.json) and pipe them to jq.
+RUN npm install -g json5@2.2.3
 
 # Container entrypoint script.
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
