@@ -34,9 +34,14 @@ can review.
    - the chart is rendered with `helm template` for each environment and compared with `origin/main`:
      only the intended environments change
 5. The full test project of the module is run, not only the new tests (backend: always with
-   `-p:NuGetAudit=false`).
-6. A recap is given: what was done, deviations from the design (with a proposal), risks, and what
-   isn't covered by the tests. The user is asked before committing.
+   `-p:NuGetAudit=false`). In the backend, code coverage is collected in the same run
+   (`--collect:"XPlat Code Coverage"`), then summarized with `reportgenerator`
+   (`-reporttypes:TextSummary`, output in the scratchpad).
+6. A recap is given: what was done, deviations from the design (with a proposal), risks, what
+   isn't covered by the tests, and, in the backend, the coverage of the classes changed by the task
+   (line and branch rates, per class). No target rate is defined: the rate is reported, not judged,
+   and the user decides whether more tests are needed. The coverage is given in the recap only, not
+   in the pull request. The user is asked before committing.
 7. One commit per task, following the commit conventions. When a commit turns out to contain the
    work of another task, it's split before push, after the user's agreement.
 
