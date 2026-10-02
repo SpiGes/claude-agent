@@ -157,6 +157,10 @@ Starting the agent one level up, at `~/workspace/spiges`, the parent of the back
 
 The file is placed under `$SHARED_BASE_DIR` (default `~/.agents/shared`), then referenced in the conversation with `@/shared/file-name`.
 
+### Trusting a personal certificate
+
+A certificate that only one person needs, for example the self-signed certificate of the MinIO used by a local run of the SpiGes backend, isn't added to `certs/`: it would be trusted in every image. It's placed in a folder under `$SHARED_BASE_DIR` instead (e.g. `backend-run/certs/`, in PEM format, `*.crt` or `*.pem`), and that folder is given in the `.env` file as `EXTRA_CA_CERTS_DIR` (container path, e.g. `/shared/backend-run/certs`). At each start, the entrypoint appends these certificates to a copy of the system bundle, used by .NET, curl, OpenSSL, and Python, and to a copy of the Node extra certificates. No rebuild is needed; a new or changed certificate is taken into account at the next start.
+
 ### A personal preference, shared across every profile
 
 A habit that should apply regardless of which profile is running, for example a keyword that switches a response to technical English, is written once to `$AGENT_USER_FILE` (default `$AGENT_HOMES_DIR/CLAUDE.user.md`), a plain file outside any profile that every profile's `CLAUDE.md` imports automatically. It can be edited directly from the WSL2 host, not only from inside a session.

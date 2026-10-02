@@ -47,5 +47,29 @@ if git_server_enabled https://github.com/; then
     configure_authorship GITHUB /tmp/gitconfig-github
 fi
 
+# Personal CA certificates, from the folder given by EXTRA_CA_CERTS_DIR (.env), e.g. the self-signed
+# certificate of a MinIO running on the developer machine. The container runs as a non-root user,
+# so update-ca-certificates can't be used here: the certificates are appended to a copy of the
+# system bundle, which the OpenSSL-based tools, Python and .NET read through SSL_CERT_FILE, and to a
+# copy of the Node extra certificates. Only *.crt and *.pem files are read; a file without any PEM
+# certificate stops the startup.
+if [ -n "${EXTRA_CA_CERTS_DIR:-}" ]; then
+    [ -d "$EXTRA_CA_CERTS_DIR" ] || fail "EXTRA_CA_CERTS_DIR ($EXTRA_CA_CERTS_DIR) is not a folder."
+
+    bundle=/tmp/ca-certificates.crt
+    node_bundle=/tmp/node-extra-ca-certificates.crt
+    cp "$SSL_CERT_FILE" "$bundle"
+    cp "$NODE_EXTRA_CA_CERTS" "$node_bundle"
+
+    shopt -s nullglob
+    for cert in "$EXTRA_CA_CERTS_DIR"/*.crt "$EXTRA_CA_CERTS_DIR"/*.pem; do
+        grep -q -- '-----BEGIN CERTIFICATE-----' "$cert" || fail "$cert holds no PEM certificate."
+        { echo; cat "$cert"; } | tee -a "$bundle" >> "$node_bundle"
+    done
+    shopt -u nullglob
+
+    export SSL_CERT_FILE="$bundle" REQUESTS_CA_BUNDLE="$bundle" NODE_EXTRA_CA_CERTS="$node_bundle"
+fi
+
 # Executes the command normally passed to `docker run` (e.g., "claude")
 exec "$@"
