@@ -118,6 +118,12 @@ Structure every commit message as: `[#<task number>] - Explanatory message begin
 a verb at the third person`.
 Example: `[#156397] - Updates and extends tests for the authorized-units trigger`.
 
+The task number is the ID of a work item of type Task, never the ID of its parent (issue,
+bug, user story, feature). When the work starts from another type of work item and no task
+under it covers the change, a task is proposed before the first commit (title, short
+description, parent, assigned to the user) and created after the user's agreement. The pull
+request is then linked to the parent work item and to the task(s).
+
 If the task number is not known from the conversation or the workspace, ask for it rather
 than guessing or omitting it.
 
