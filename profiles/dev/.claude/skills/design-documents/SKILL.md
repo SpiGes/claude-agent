@@ -90,6 +90,26 @@ This applies to every chapter, and most of all to `Purpose` and `Scope`.
 It doesn't apply to the reason and the consequence of a decision — those two carry the value
 of the document and stay complete, even when they cost more words than the decision itself.
 
+## Level of detail
+
+A design document describes the solution through its decisions, not through its implementation or its
+delivery. It doesn't contain:
+
+- branch names, commit hashes, or references to code that waits on a branch or in a task, outside the
+  `References` chapter
+- deployment details: Helm values, per-environment switches of the gitops repository, values of a
+  feature flag. Only the principle is written when it matters to the solution (e.g. "hidden behind a
+  feature flag")
+- very concrete code: code excerpts, method bodies, or the names of the classes that only a
+  non-retained option would create
+
+The names of the components of the retained solution (services, commands, models, configuration
+keys) stay, in italics, since a reader needs them to find the solution in the code. A non-retained
+option is described like any other choice, by its mechanism, what it brings, and what it costs; its
+implementation isn't described, even when a prototype exists.
+
+The deployment details belong to the `Compatibility` chapter of the pull request.
+
 ## Design point chapters
 
 Each design point gets its own chapter, named after the question it answers rather than after
