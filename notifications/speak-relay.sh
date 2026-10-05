@@ -10,6 +10,7 @@
 # Settings (environment):
 #   SPEAK_RELAY_PIPER          piper executable (default ~/.local/bin/piper)
 #   SPEAK_RELAY_PIPER_MODEL    piper voice model, .onnx file (default ~/.local/share/piper-voices/fr_FR-siwis-medium.onnx)
+#   SPEAK_RELAY_PIPER_SPEAKER  speaker id, for a model with several speakers (default: the first one, 0)
 #   SPEAK_RELAY_ESPEAK_VOICE   espeak-ng voice (default fr)
 #   SPEAK_RELAY_MAX_AGE        age in seconds above which a message is skipped (default 600)
 #
@@ -19,6 +20,8 @@
 select_engine(){
     piper_bin="${SPEAK_RELAY_PIPER:-$HOME/.local/bin/piper}"
     piper_model="${SPEAK_RELAY_PIPER_MODEL:-$HOME/.local/share/piper-voices/fr_FR-siwis-medium.onnx}"
+    piper_args=()
+    [ -z "${SPEAK_RELAY_PIPER_SPEAKER:-}" ] || piper_args=(-s "$SPEAK_RELAY_PIPER_SPEAKER")
     espeak_voice="${SPEAK_RELAY_ESPEAK_VOICE:-fr}"
 
     if [ -x "$piper_bin" ] && [ -f "$piper_model" ] && command -v paplay >/dev/null; then
@@ -34,7 +37,7 @@ select_engine(){
 # has ended doesn't keep the lock.
 speak(){
     if [ "$engine" = piper ]; then
-        printf '%s' "$1" | "$piper_bin" -m "$piper_model" -f "$wav" 2>/dev/null 9>&- && paplay "$wav" 9>&-
+        printf '%s' "$1" | "$piper_bin" -m "$piper_model" "${piper_args[@]}" -f "$wav" 2>/dev/null 9>&- && paplay "$wav" 9>&-
     else
         printf '%s' "$1" | espeak-ng -v "$espeak_voice" 9>&-
     fi

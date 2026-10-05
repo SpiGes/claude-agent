@@ -171,6 +171,7 @@ Exported in `~/.bashrc`, before `launch.sh` is sourced:
 | `AGENT_NOTIFY_DIR` | `$AGENT_HOMES_DIR/notifications` | Queue folder on the host |
 | `AGENT_NOTIFY_NAME` | Workspace name | Name that starts each message |
 | `SPEAK_RELAY_PIPER_MODEL` | `~/.local/share/piper-voices/fr_FR-siwis-medium.onnx` | piper voice model |
+| `SPEAK_RELAY_PIPER_SPEAKER` | First speaker (`0`) | Speaker id, for a model with several speakers (e.g. `1` for Pierre in `fr_FR-upmc-medium`, whose speaker `0` is Jessica); the ids are in the `speaker_id_map` of the model `.onnx.json` file |
 | `SPEAK_RELAY_PIPER` | `~/.local/bin/piper` | piper executable |
 | `SPEAK_RELAY_ESPEAK_VOICE` | `fr` | espeak-ng voice |
 | `SPEAK_RELAY_MAX_AGE` | `600` | Age in seconds above which a message is skipped |
