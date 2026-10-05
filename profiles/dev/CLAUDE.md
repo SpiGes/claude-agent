@@ -131,6 +131,20 @@ Keep commits atomic wherever possible: do not mix unrelated changes in a single 
 If a set of changes covers more than one unrelated concern, split it into separate commits
 rather than combining them.
 
+## Spoken notifications
+
+When the work asked for in a request is finished, or when it's blocked on a decision of the user, a
+spoken notification is sent with `agent-notify "<text>"`, as a colleague would do:
+
+- One sentence, in the language of the conversation, saying what was done and its outcome, or what
+  is needed (e.g. "J'ai terminé la revue de la PR 44008, trois remarques à valider")
+- Not for intermediate steps (build, tests, file reads), and not for a quick answer the user is
+  clearly waiting for
+- No markdown, paths, or long identifiers, which don't read well aloud
+
+`agent-notify` does nothing when spoken notifications aren't set up on the host. A permission prompt
+is announced by a hook, not by the agent.
+
 ## Instruction governance
 
 - If you detect an inconsistency between instructions, files (project CLAUDE.md, rules

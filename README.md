@@ -182,6 +182,8 @@ Exported in `~/.bashrc`, before `launch.sh` is sourced:
 | `SPEAK_RELAY_ESPEAK_VOICE` | `fr` | espeak-ng voice |
 | `SPEAK_RELAY_MAX_AGE` | `600` | Age in seconds above which a message is skipped |
 
+The text spoken on a permission prompt (`Autorisation requise` by default) is set in the `.env` file, since the hook runs in the container: `AGENT_NOTIFY_PERMISSION_TEXT`.
+
 The relay reads its settings when it starts: after a change, it's stopped (`pkill -f speak-relay.sh`) and started again by the next launch of an agent.
 
 ### Check
