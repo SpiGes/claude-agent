@@ -182,7 +182,14 @@ Exported in `~/.bashrc`, before `launch.sh` is sourced:
 | `SPEAK_RELAY_ESPEAK_VOICE` | `fr` | espeak-ng voice |
 | `SPEAK_RELAY_MAX_AGE` | `600` | Age in seconds above which a message is skipped |
 
-The text spoken on a permission prompt (`Autorisation requise` by default) is set in the `.env` file, since the hook runs in the container: `AGENT_NOTIFY_PERMISSION_TEXT`.
+Two hooks of the dev profile speak a fixed text, set in the `.env` file, since the hooks run in the container:
+
+| Variable | Default | Spoken when |
+|---|---|---|
+| `AGENT_NOTIFY_GREETING_TEXT` | `Bonjour, je suis prêt` | A new session starts (not on `--resume`, `/clear`, or a compaction). An empty value disables it |
+| `AGENT_NOTIFY_PERMISSION_TEXT` | `Autorisation requise` | The agent waits for a permission |
+
+A text can't contain an apostrophe (`'`): bash reads it as a quote in the hook command, which then fails.
 
 The relay reads its settings when it starts: after a change, it's stopped (`pkill -f speak-relay.sh`) and started again by the next launch of an agent.
 

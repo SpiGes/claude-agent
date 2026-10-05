@@ -45,6 +45,17 @@
     ]
   },
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-notify \"${AGENT_NOTIFY_GREETING_TEXT-Bonjour, je suis prêt}\""
+          }
+        ]
+      }
+    ],
     "Notification": [
       {
         "matcher": "permission_prompt",
