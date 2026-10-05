@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Queues a spoken notification for the relay on the WSL host (notifications/speak-relay.sh), run in the
+# container. The text is prefixed with the name of the agent workspace (AGENT_NOTIFY_NAME), so that several
+# agents running at the same time can be told apart.
+# Does nothing when spoken notifications aren't set up for this container (see launch.sh).
+#
+# Usage: agent-notify <text>
+set -euo pipefail
+
+[ $# -gt 0 ] || { echo "Usage: agent-notify <text>" >&2; exit 2; }
+dir="${AGENT_NOTIFY_DIR:-}"
+{ [ -n "$dir" ] && [ -d "$dir" ]; } || exit 0
+
+text="$*"
+[ -z "${AGENT_NOTIFY_NAME:-}" ] || text="$AGENT_NOTIFY_NAME: $text"
+
+# Written under a temporary name first, so that the relay never reads a partial file
+name="$(date +%Y%m%d-%H%M%S-%N)-${HOSTNAME:-agent}-$$"
+printf '%s\n' "$text" > "$dir/$name.tmp"
+mv "$dir/$name.tmp" "$dir/$name.txt"
