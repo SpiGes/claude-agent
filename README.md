@@ -151,22 +151,15 @@ The agent tells the person, with a spoken message, when the requested work is fi
 From WSL2, once:
 
 ```bash
-ls /mnt/wslg/PulseServer                       # WSLg audio server, must exist
-sudo apt install -y pulseaudio-utils espeak-ng pipx
-pipx install piper-tts
-mkdir -p ~/.local/share/piper-voices
-~/.local/share/pipx/venvs/piper-tts/bin/python -m piper.download_voices --download-dir ~/.local/share/piper-voices fr_FR-siwis-medium
+~/.agents/bfs-claude-agent/notifications/install-host.sh
 ```
 
-- espeak-ng alone is enough, but its voice is robotic. piper gives a more natural voice; it's used as soon as `~/.local/bin/piper`, its voice model, and `paplay` are found.
-- apt and pip don't share their proxy settings. When `pipx install` hangs, pip needs the proxy, e.g. in `~/.config/pip/pip.conf`, with `cert` pointing to the system bundle, since the proxy re-signs the HTTPS traffic with the corporate CA:
-  ```ini
-  [global]
-  proxy = http://<host>:<port>
-  cert = /etc/ssl/certs/ca-certificates.crt
-  ```
-- Other voices (e.g. `de_DE-thorsten-medium`, `fr_FR-tom-medium`) are listed in the piper documentation and downloaded the same way.
-- A quick test: `echo "Test" | ~/.local/bin/piper -m ~/.local/share/piper-voices/fr_FR-siwis-medium.onnx -f /tmp/test.wav && paplay /tmp/test.wav`
+The script installs `pulseaudio-utils`, `espeak-ng`, and `pipx` (with `sudo`), then piper (`pipx install piper-tts`) and the French voice `fr_FR-siwis-medium`, and ends with a spoken test sentence. Each step is skipped when it's already done, so the script can be run again.
+
+- WSLg must be active: the script stops when `/mnt/wslg/PulseServer` doesn't exist.
+- pip doesn't read the proxy settings of apt. When no proxy is given to pip (`https_proxy`, or a `pip.conf`), the script uses the proxy of apt for the piper installation and the voice download only, with the system CA bundle, since the corporate proxy re-signs the HTTPS traffic. No configuration file is changed.
+- Another voice (e.g. `de_DE-thorsten-medium`, `fr_FR-tom-medium`, see the piper documentation) is added with `install-host.sh --voice <name>`; the script then shows the `SPEAK_RELAY_PIPER_MODEL` line to add to `~/.bashrc`.
+- espeak-ng alone is enough, but its voice is robotic. piper is used as soon as `~/.local/bin/piper`, its voice model, and `paplay` are found.
 
 ### Settings
 
@@ -274,6 +267,7 @@ bfs-claude-agent/
   notifications/
     agent-notify      (copied into the image)
     speak-relay.sh    (run on the WSL2 host)
+    install-host.sh   (run once on the WSL2 host)
   certs/
     bit-proxy-ca.pem
     nexus-ca.pem
