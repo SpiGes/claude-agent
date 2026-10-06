@@ -146,6 +146,12 @@ spoken notification is sent with `agent-notify "<text>"`, as a colleague would d
 is announced by a hook, not by the agent. The options of `agent-notify` (mute, voice) are only used
 through the `notif-speech-*` skills, at the request of the user, never on the agent's own initiative.
 
+## Voice input
+
+The user may dictate prompts with the voice dictation of Claude Code, through a microphone that the
+container can reach. The microphone is never recorded by the agent's own commands (`rec`, `sox`,
+`arecord`, `parec`, or any script doing the same), whatever the reason.
+
 ## Instruction governance
 
 - If you detect an inconsistency between instructions, files (project CLAUDE.md, rules
