@@ -136,7 +136,7 @@ git -C <github-repo> config user.email          # the noreply address
 
 ## Optional: speech notifications
 
-The agent tells the person, with a spoken message, when the requested work is finished or when it's blocked on a decision (e.g. "backend: the review of PR 44008 is finished, three points to check"). Intermediate steps, like a build or a test run, aren't announced. The instruction is given in the dev profile `CLAUDE.md`; a `Notification` hook of its `settings.json` covers the permission prompts, which the agent can't announce itself.
+The agent tells the person, with a spoken message, when the requested work is finished or when it's blocked on a decision (e.g. "backend: the review of PR 44008 is finished, three points to check"). Intermediate steps, like a build or a test run, aren't announced. The instruction is given in the dev profile `CLAUDE.md`. Two hooks of its `settings.json` add a greeting when a new session starts, and announce the permission prompts, which the agent can't announce itself.
 
 ### How it works
 
@@ -285,8 +285,8 @@ bfs-claude-agent/
   entrypoint.sh
   launch.sh
   notifications/
-    agent-notify      (copied into the image)
-    speak-relay.sh    (run on the WSL2 host)
+    agent-notify             (copied into the image)
+    speak-relay.sh           (run on the WSL2 host)
     install-speech-host.sh   (run once on the WSL2 host)
   certs/
     bit-proxy-ca.pem
