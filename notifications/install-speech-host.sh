@@ -8,17 +8,18 @@
 #   --proxy <url>    proxy for the piper installation and the voice download, e.g. http://proxy.example:8080;
 #                    it takes precedence over any other proxy setting. A URL with credentials is kept in the
 #                    shell history: the proxy settings below are preferable in that case
-#   --force          downloads the voice again, e.g. when the check below finds it damaged
+#   --force          downloads the voice again, even when its files are complete
 #   --no-test        doesn't speak the test sentence at the end
 #
-# pip doesn't read the proxy settings of apt, and the voice download doesn't read the ones of pip: it only
-# reads https_proxy. Without --proxy, the proxy is taken from https_proxy, else from a pip.conf, else from
-# apt, and given to both. In every case, the proxy only applies to the piper installation and the voice
+# pip doesn't read the proxy settings of apt, and the voice download (curl) doesn't read the ones of pip: it
+# only reads https_proxy. Without --proxy, the proxy is taken from https_proxy, else from a pip.conf, else
+# from apt, and given to both. In every case, the proxy only applies to the piper installation and the voice
 # download, with the system CA bundle, since the corporate proxy re-signs the HTTPS traffic. No configuration
 # file is changed.
 #
-# The voice is always checked by a synthesis, also with --no-test: an incomplete download leaves a model that
-# piper can't read, and that isn't downloaded again unless --force is given.
+# The files of the voice are checked against the MD5 checksums of the piper voice catalog at each run, and
+# downloaded again when they're damaged (e.g. an incomplete download); the voice is then checked by a
+# synthesis, also with --no-test.
 set -euo pipefail
 
 voice=fr_FR-siwis-medium
@@ -107,25 +108,58 @@ else
 fi
 
 step "Voice $voice"
-if [ "$force" = 0 ] && [ -f "$voices_dir/$voice.onnx" ] && [ -f "$voices_dir/$voice.onnx.json" ]; then
-    echo "already downloaded ($voices_dir)"
-else
-    mkdir -p "$voices_dir"
-    download_args=(--download-dir "$voices_dir")
-    [ "$force" = 0 ] || download_args+=(--force-redownload)
-    "$(pipx environment --value PIPX_LOCAL_VENVS)/piper-tts/bin/python" -m piper.download_voices \
-        "${download_args[@]}" "$voice"
+# The files of the voice and their MD5 checksums are read from the piper voice catalog. A file is downloaded
+# when it's missing or its checksum differs (e.g. after an incomplete download), or with --force; curl shows
+# the progress, and gives up when the transfer stalls instead of waiting forever.
+temp_files=()
+trap 'rm -f -- "${temp_files[@]}"' EXIT
+voices_url=https://huggingface.co/rhasspy/piper-voices/resolve/main
+curl_args=(-fL --retry 3 --connect-timeout 30 --speed-limit 1000 --speed-time 60)
+md5_of(){ md5sum < "$1" | cut -d' ' -f1; }
+
+catalog="$(mktemp)"; temp_files+=("$catalog")
+echo "reading the voice catalog"
+curl "${curl_args[@]}" -sS -o "$catalog" "$voices_url/voices.json"
+if ! voice_files="$(python3 - "$catalog" "$voice" <<'PY'
+import json, sys
+entry = json.load(open(sys.argv[1])).get(sys.argv[2])
+if not entry:
+    sys.exit(1)
+for path, file in entry["files"].items():
+    if path.endswith((".onnx", ".onnx.json")):
+        print(path, file["md5_digest"])
+PY
+)"; then
+    echo "The voice $voice isn't in the piper voice catalog ($voices_url/voices.json)." >&2
+    exit 1
 fi
 
-# piper fails on a damaged model (e.g. an incomplete download): its error is shown, with the way to fix it
-wav="$(mktemp --suffix .wav)"
-piper_errors="$(mktemp)"
-trap 'rm -f -- "$wav" "$piper_errors"' EXIT
+mkdir -p "$voices_dir"
+while read -r path md5; do
+    file="${path##*/}"
+    target="$voices_dir/$file"
+    if [ "$force" = 0 ] && [ -f "$target" ] && [ "$(md5_of "$target")" = "$md5" ]; then
+        echo "$file: already downloaded"
+        continue
+    fi
+    echo "$file: downloading"
+    partial="$target.partial"; temp_files+=("$partial")
+    curl "${curl_args[@]}" --progress-bar -o "$partial" "$voices_url/$path"
+    if [ "$(md5_of "$partial")" != "$md5" ]; then
+        echo "$file: the downloaded file is damaged (checksum mismatch), the script can be run again" >&2
+        exit 1
+    fi
+    mv -f "$partial" "$target"
+done <<< "$voice_files"
+
+# Checked by a synthesis too, which also proves that piper and the model work together
+wav="$(mktemp --suffix .wav)"; temp_files+=("$wav")
+piper_errors="$(mktemp)"; temp_files+=("$piper_errors")
 if echo "Les notifications vocales sont prêtes." | "$piper_bin" -m "$voices_dir/$voice.onnx" -f "$wav" 2>"$piper_errors"; then
     echo "voice checked: piper reads it"
 else
     tail -1 "$piper_errors" >&2
-    echo "piper can't read the voice $voice, e.g. after an incomplete download. Download it again with:" >&2
+    echo "piper can't read the voice $voice. It can be downloaded again with:" >&2
     echo "  install-speech-host.sh --voice $voice --force" >&2
     exit 1
 fi
