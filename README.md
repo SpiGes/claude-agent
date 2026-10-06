@@ -134,13 +134,13 @@ git -C <github-repo> push --dry-run origin HEAD # authenticates with the Git tok
 git -C <github-repo> config user.email          # the noreply address
 ```
 
-## Optional: spoken notifications
+## Optional: speech notifications
 
 The agent tells the person, with a spoken message, when the requested work is finished or when it's blocked on a decision (e.g. "backend: the review of PR 44008 is finished, three points to check"). Intermediate steps, like a build or a test run, aren't announced. The instruction is given in the dev profile `CLAUDE.md`; a `Notification` hook of its `settings.json` covers the permission prompts, which the agent can't announce itself.
 
 ### How it works
 
-- In the container, `agent-notify "<text>"` writes the text to a file in the queue folder, mounted as `/notifications`. The container gets no audio device and no PulseAudio socket: the WSLg audio server also gives access to the microphone, which the agent doesn't need.
+- In the container, `agent-notify "<text>"` writes the text to a file in the queue folder, mounted as `/notifications/speech`. The container gets no audio device and no PulseAudio socket: the WSLg audio server also gives access to the microphone, which the agent doesn't need.
 - On the WSL2 host, `notifications/speak-relay.sh` reads the queue, in the order of arrival, and speaks each message through the WSLg audio, with piper when it's installed, with espeak-ng otherwise. Messages older than 10 minutes are skipped, so that a backlog isn't read out when the relay starts.
 - `launch.sh` starts the relay at each launch of an agent. Only one relay runs per user (`flock` lock): a launch while it's running has no effect. The relay keeps running after the agent ends, until WSL shuts the distribution down.
 - Each message starts with the name of the agent workspace: the folder the agent is started from, or the folder above it when that folder is named `branch` (e.g. `backend` for `backend/branch`). Several agents running at the same time can be told apart.
@@ -151,14 +151,14 @@ The agent tells the person, with a spoken message, when the requested work is fi
 From WSL2, once:
 
 ```bash
-~/.agents/bfs-claude-agent/notifications/install-host.sh
+~/.agents/bfs-claude-agent/notifications/install-speech-host.sh
 ```
 
 The script installs `pulseaudio-utils`, `espeak-ng`, and `pipx` (with `sudo`), then piper (`pipx install piper-tts`) and the French voice `fr_FR-siwis-medium`, and ends with a spoken test sentence. Each step is skipped when it's already done, so the script can be run again.
 
 - WSLg must be active: the script stops when `/mnt/wslg/PulseServer` doesn't exist.
 - pip doesn't read the proxy settings of apt. When no proxy is given to pip (`https_proxy`, or a `pip.conf`), the script uses the proxy of apt for the piper installation and the voice download only, with the system CA bundle, since the corporate proxy re-signs the HTTPS traffic. No configuration file is changed.
-- Another voice (e.g. `de_DE-thorsten-medium`, `fr_FR-tom-medium`, see the piper documentation) is added with `install-host.sh --voice <name>`; the script then shows the `SPEAK_RELAY_PIPER_MODEL` line to add to `~/.bashrc`.
+- Another voice (e.g. `de_DE-thorsten-medium`, `fr_FR-tom-medium`, see the piper documentation) is added with `install-speech-host.sh --voice <name>`; the script then shows the `SPEAK_RELAY_PIPER_MODEL` line to add to `~/.bashrc`.
 - espeak-ng alone is enough, but its voice is robotic. piper is used as soon as `~/.local/bin/piper`, its voice model, and `paplay` are found.
 
 ### Settings
@@ -167,8 +167,8 @@ Exported in `~/.bashrc`, before `launch.sh` is sourced:
 
 | Variable | Default | Effect |
 |---|---|---|
-| `AGENT_NOTIFY_SPEECH` | `1` | `0`: `launch.sh` neither starts the relay nor mounts the queue folder, so the agents launched afterwards don't notify. A relay already running and the agents launched before aren't affected (see `claude_notify_stop`) |
-| `AGENT_NOTIFY_DIR` | `$AGENT_HOMES_DIR/notifications` | Queue folder on the host |
+| `AGENT_NOTIFY_SPEECH` | `1` | `0`: `launch.sh` neither starts the relay nor mounts the queue folder, so the agents launched afterwards don't notify. A relay already running and the agents launched before aren't affected (see `claude_notify_speech_stop`) |
+| `AGENT_NOTIFY_SPEECH_DIR` | `$AGENT_HOMES_DIR/notifications/speech` | Speech queue folder on the host |
 | `AGENT_NOTIFY_NAME` | Workspace name | Name that starts each message |
 | `SPEAK_RELAY_PIPER_MODEL` | `~/.local/share/piper-voices/fr_FR-siwis-medium.onnx` | piper voice model |
 | `SPEAK_RELAY_PIPER_SPEAKER` | First speaker (`0`) | Speaker id, for a model with several speakers (e.g. `1` for Pierre in `fr_FR-upmc-medium`, whose speaker `0` is Jessica); the ids are in the `speaker_id_map` of the model `.onnx.json` file |
@@ -185,11 +185,11 @@ Two hooks of the dev profile speak a fixed text, set in the `.env` file, since t
 
 A text can't contain an apostrophe (`'`): bash reads it as a quote in the hook command, which then fails.
 
-The relay reads its settings when it starts: after a change, it's stopped with `claude_notify_stop` (defined in `launch.sh`) and started again by the next launch of an agent.
+The relay reads its settings when it starts: after a change, it's stopped with `claude_notify_speech_stop` (defined in `launch.sh`) and started again by the next launch of an agent.
 
 ### Muting
 
-From a session of the dev profile, `/notif-off` mutes the spoken notifications and `/notif-on` unmutes them. The mute is global: `agent-notify --off` writes a `.muted` file to the queue folder, shared by every agent of the person, and `agent-notify` queues nothing while it exists. It applies at once to the agents already running, covers the greeting and the permission prompts, and is kept until `/notif-on`, also after a restart. The relay keeps running, idle.
+From a session of the dev profile, `/notif-speech-off` mutes the speech notifications and `/notif-speech-on` unmutes them. The mute is global: `agent-notify --speech-off` writes a `.muted` file to the speech queue folder, shared by every agent of the person, and `agent-notify` queues nothing while it exists. It applies at once to the agents already running, covers the greeting and the permission prompts, and is kept until `/notif-speech-on`, also after a restart. The relay keeps running, idle.
 
 `AGENT_NOTIFY_SPEECH` and the mute work at two levels: the first decides, at each launch, whether an agent is connected to the relay at all; the second silences every connected agent without disconnecting it.
 
@@ -206,7 +206,7 @@ From a session of the dev profile, `/notif-off` mutes the spoken notifications a
 | `claude_dev` | Starts the agent in general development mode (dev profile), with the Confluence and Azure DevOps MCP servers available |
 | `claude_dev_bash` | Opens a shell in the same environment, without starting Claude Code; useful for testing dotnet build, git status, and similar commands by hand |
 | `claude_qualitycheck` | Starts the agent in review-only mode (qualitycheck profile, read-only, no MCP server) |
-| `claude_notify_stop` | Stops the speech relay of the spoken notifications (see "Optional: spoken notifications"); the next launch of an agent starts it again |
+| `claude_notify_speech_stop` | Stops the speech relay of the speech notifications (see "Optional: speech notifications"); the next launch of an agent starts it again |
 
 Each command starts a new container, removed on exit (--rm); nothing needs to be stopped or cleaned up by hand.
 
@@ -275,7 +275,7 @@ bfs-claude-agent/
   notifications/
     agent-notify      (copied into the image)
     speak-relay.sh    (run on the WSL2 host)
-    install-host.sh   (run once on the WSL2 host)
+    install-speech-host.sh   (run once on the WSL2 host)
   certs/
     bit-proxy-ca.pem
     nexus-ca.pem

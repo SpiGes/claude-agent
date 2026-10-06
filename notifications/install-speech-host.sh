@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Installs the host prerequisites of the spoken notifications, run once on the WSL2 host (not in the
+# Installs the host prerequisites of the speech notifications, run once on the WSL2 host (not in the
 # container): the audio tools, espeak-ng, piper, and a piper voice. Each step is skipped when it's already
 # done, so the script can be run again, e.g. to add another voice.
 #
-# Usage: install-host.sh [--voice <name>] [--no-test]
+# Usage: install-speech-host.sh [--voice <name>] [--no-test]
 #   --voice <name>   piper voice to download (default fr_FR-siwis-medium), e.g. de_DE-thorsten-medium
 #   --no-test        doesn't speak the test sentence at the end
 #
@@ -18,7 +18,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --voice) voice="${2:?--voice needs a voice name}"; shift 2 ;;
         --no-test) test_speech=0; shift ;;
-        *) echo "Usage: install-host.sh [--voice <name>] [--no-test]" >&2; exit 2 ;;
+        *) echo "Usage: install-speech-host.sh [--voice <name>] [--no-test]" >&2; exit 2 ;;
     esac
 done
 
@@ -108,5 +108,5 @@ if [ "$test_speech" = 1 ]; then
 fi
 
 echo
-echo "Done. A running relay must be stopped (claude_notify_stop) to take a new setting into account;"
+echo "Done. A running relay must be stopped (claude_notify_speech_stop) to take a new setting into account;"
 echo "the next launch of an agent starts it again."

@@ -185,7 +185,8 @@ RUN npm install -g @mermaid-js/mermaid-cli@11.17.0
 # (e.g. the backend appsettings.json) and pipe them to jq.
 RUN npm install -g json5@2.2.3
 
-# Spoken notifications: queues a text for the speech relay on the WSL host (see notifications/ and README).
+# Notifications of the agent (see notifications/ and README); speech only so far: queues a text for the
+# speech relay on the WSL host.
 COPY notifications/agent-notify /usr/local/bin/agent-notify
 RUN chmod +x /usr/local/bin/agent-notify
 

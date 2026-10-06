@@ -1,45 +1,49 @@
 #!/usr/bin/env bash
-# Queues a spoken notification for the relay on the WSL host (notifications/speak-relay.sh), run in the
-# container. The text is prefixed with the name of the agent workspace (AGENT_NOTIFY_NAME), so that several
-# agents running at the same time can be told apart.
-# Does nothing when spoken notifications aren't set up for this container (see launch.sh), or when they're
-# muted. The mute is global: a .muted file in the queue folder, shared by every agent of the person, kept
-# until it's removed with --on.
+# Sends a notification of the agent, run in the container. Entry point used by the agent and by the hooks,
+# whatever the channel; the only channel so far is speech: the text is queued for the speech relay on the
+# WSL host (notifications/speak-relay.sh).
+# The text is prefixed with the name of the agent workspace (AGENT_NOTIFY_NAME), so that several agents
+# running at the same time can be told apart.
 #
-# Usage: agent-notify <text>      queues the text, unless muted
-#        agent-notify --off       mutes the spoken notifications of every agent
-#        agent-notify --on        unmutes them
-#        agent-notify --status    prints the current state
+# Speech channel: does nothing when it isn't set up for this container (see launch.sh), or when it's muted.
+# The mute is global: a .muted file in the speech queue folder, shared by every agent of the person, kept
+# until it's removed with --speech-on.
+#
+# Usage: agent-notify <text>          sends the text
+#        agent-notify --speech-off    mutes the speech notifications of every agent
+#        agent-notify --speech-on     unmutes them
+#        agent-notify --status        prints the current state
 set -euo pipefail
 
-[ $# -gt 0 ] || { echo "Usage: agent-notify <text> | --off | --on | --status" >&2; exit 2; }
-dir="${AGENT_NOTIFY_DIR:-}"
-set_up=0
-{ [ -n "$dir" ] && [ -d "$dir" ]; } && set_up=1
-muted_file="$dir/.muted"
+[ $# -gt 0 ] || { echo "Usage: agent-notify <text> | --speech-off | --speech-on | --status" >&2; exit 2; }
+speech_dir="${AGENT_NOTIFY_SPEECH_DIR:-}"
+speech_set_up=0
+{ [ -n "$speech_dir" ] && [ -d "$speech_dir" ]; } && speech_set_up=1
+speech_muted_file="$speech_dir/.muted"
 
 status(){
-    if [ "$set_up" = 0 ]; then
-        echo "Spoken notifications aren't set up for this agent (AGENT_NOTIFY_SPEECH=0, or no speech engine on the host when it was launched)."
-    elif [ -e "$muted_file" ]; then
-        echo "Spoken notifications are muted for every agent."
+    if [ "$speech_set_up" = 0 ]; then
+        echo "Speech notifications aren't set up for this agent (AGENT_NOTIFY_SPEECH=0, or no speech engine on the host when it was launched)."
+    elif [ -e "$speech_muted_file" ]; then
+        echo "Speech notifications are muted for every agent."
     else
-        echo "Spoken notifications are on for every agent."
+        echo "Speech notifications are on for every agent."
     fi
 }
 
 case "$1" in
-    --off) [ "$set_up" = 0 ] || touch "$muted_file"; status; exit 0 ;;
-    --on) [ "$set_up" = 0 ] || rm -f -- "$muted_file"; status; exit 0 ;;
+    --speech-off) [ "$speech_set_up" = 0 ] || touch "$speech_muted_file"; status; exit 0 ;;
+    --speech-on) [ "$speech_set_up" = 0 ] || rm -f -- "$speech_muted_file"; status; exit 0 ;;
     --status) status; exit 0 ;;
+    --*) echo "agent-notify: unknown option $1" >&2; exit 2 ;;
 esac
-
-{ [ "$set_up" = 1 ] && [ ! -e "$muted_file" ]; } || exit 0
 
 text="$*"
 [ -z "${AGENT_NOTIFY_NAME:-}" ] || text="$AGENT_NOTIFY_NAME: $text"
 
-# Written under a temporary name first, so that the relay never reads a partial file
-name="$(date +%Y%m%d-%H%M%S-%N)-${HOSTNAME:-agent}-$$"
-printf '%s\n' "$text" > "$dir/$name.tmp"
-mv "$dir/$name.tmp" "$dir/$name.txt"
+# Speech: written under a temporary name first, so that the relay never reads a partial file
+if [ "$speech_set_up" = 1 ] && [ ! -e "$speech_muted_file" ]; then
+    name="$(date +%Y%m%d-%H%M%S-%N)-${HOSTNAME:-agent}-$$"
+    printf '%s\n' "$text" > "$speech_dir/$name.tmp"
+    mv "$speech_dir/$name.tmp" "$speech_dir/$name.txt"
+fi

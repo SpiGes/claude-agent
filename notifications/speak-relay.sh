@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Speech relay of the spoken notifications, run on the WSL host (not in the container), started by launch.sh.
+# Speech relay of the speech notifications, run on the WSL host (not in the container), started by launch.sh.
 # Reads the text files that agent-notify drops into the queue folder, in their order of arrival, and speaks
 # them through the WSLg audio: with piper when it and its voice model are found, with espeak-ng otherwise.
 # Only one relay runs per user: a second one exits at once.

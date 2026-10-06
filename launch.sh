@@ -9,9 +9,9 @@ export AGENT_ENV_FILE="${AGENT_ENV_FILE:-$AGENT_HOMES_DIR/.env}"
 export SHARED_BASE_DIR="${SHARED_BASE_DIR:-$HOME/.agents/shared}"
 export AGENT_USER_FILE="${AGENT_USER_FILE:-$AGENT_HOMES_DIR/CLAUDE.user.md}"
 export AGENT_NOTIFY_SPEECH="${AGENT_NOTIFY_SPEECH:-1}"
-export AGENT_NOTIFY_DIR="${AGENT_NOTIFY_DIR:-$AGENT_HOMES_DIR/notifications}"
+export AGENT_NOTIFY_SPEECH_DIR="${AGENT_NOTIFY_SPEECH_DIR:-$AGENT_HOMES_DIR/notifications/speech}"
 
-# Name that starts each spoken notification of an agent: the name of its workspace folder, or of the folder
+# Name that starts each notification of an agent: the name of its workspace folder, or of the folder
 # above it when the workspace is a "branch" folder (e.g. backend/branch gives "backend"). AGENT_NOTIFY_NAME
 # overrides it.
 _claude_agent_notify_name(){
@@ -46,20 +46,20 @@ _claude_agent(){
 
     touch "$AGENT_USER_FILE" 2>/dev/null || true
 
-    # Spoken notifications (see README): when enabled and a speech engine is available on this host, the
-    # relay is started (no effect when it's already running) and its queue folder is mounted.
-    local -a notify_args=()
+    # Notifications (see README). The agent name applies to every channel. Speech: when enabled and a speech
+    # engine is available on this host, the relay is started (no effect when it's already running) and its
+    # queue folder is mounted.
+    local -a notify_args=(-e "AGENT_NOTIFY_NAME=$(_claude_agent_notify_name)")
     local relay="$AGENT_BASE_DIR/notifications/speak-relay.sh"
     if [ "$AGENT_NOTIFY_SPEECH" = "1" ]; then
         if "$relay" --check; then
             local log="${XDG_STATE_HOME:-$HOME/.local/state}/speak-relay.log"
-            mkdir -p "$AGENT_NOTIFY_DIR" "${log%/*}"
-            setsid -f "$relay" "$AGENT_NOTIFY_DIR" >>"$log" 2>&1 </dev/null
-            notify_args=(-v "$AGENT_NOTIFY_DIR:/notifications" \
-              -e AGENT_NOTIFY_DIR=/notifications \
-              -e "AGENT_NOTIFY_NAME=$(_claude_agent_notify_name)")
+            mkdir -p "$AGENT_NOTIFY_SPEECH_DIR" "${log%/*}"
+            setsid -f "$relay" "$AGENT_NOTIFY_SPEECH_DIR" >>"$log" 2>&1 </dev/null
+            notify_args+=(-v "$AGENT_NOTIFY_SPEECH_DIR:/notifications/speech" \
+              -e AGENT_NOTIFY_SPEECH_DIR=/notifications/speech)
         else
-            echo "Spoken notifications disabled: no speech engine found (see README), or set AGENT_NOTIFY_SPEECH=0." >&2
+            echo "Speech notifications disabled: no speech engine found (see README), or set AGENT_NOTIFY_SPEECH=0." >&2
         fi
     fi
 
@@ -92,9 +92,9 @@ claude_qualitycheck(){
     _claude_agent qualitycheck claude "$@"
 }
 
-# Stops the speech relay of the spoken notifications, e.g. to apply a new setting (voice, speaker); the next
+# Stops the speech relay of the speech notifications, e.g. to apply a new setting (voice, speaker); the next
 # launch of an agent starts it again.
-claude_notify_stop(){
+claude_notify_speech_stop(){
     # Matches only the relay process itself ("bash <path>/notifications/speak-relay.sh <queue>"), not e.g. an
     # editor that has the script open
     if pkill -f '^(/usr/bin/)?bash [^ ]*/notifications/speak-relay\.sh '; then
