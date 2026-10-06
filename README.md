@@ -185,7 +185,7 @@ Two hooks of the dev profile speak a fixed text, set in the `.env` file, since t
 
 A text can't contain an apostrophe (`'`): bash reads it as a quote in the hook command, which then fails.
 
-The relay reads its settings when it starts: after a change, it's stopped (`pkill -f speak-relay.sh`) and started again by the next launch of an agent.
+The relay reads its settings when it starts: after a change, it's stopped with `claude_notify_stop` (defined in `launch.sh`) and started again by the next launch of an agent.
 
 ### Check
 
@@ -200,6 +200,7 @@ The relay reads its settings when it starts: after a change, it's stopped (`pkil
 | `claude_dev` | Starts the agent in general development mode (dev profile), with the Confluence and Azure DevOps MCP servers available |
 | `claude_dev_bash` | Opens a shell in the same environment, without starting Claude Code; useful for testing dotnet build, git status, and similar commands by hand |
 | `claude_qualitycheck` | Starts the agent in review-only mode (qualitycheck profile, read-only, no MCP server) |
+| `claude_notify_stop` | Stops the speech relay of the spoken notifications (see "Optional: spoken notifications"); the next launch of an agent starts it again |
 
 Each command starts a new container, removed on exit (--rm); nothing needs to be stopped or cleaned up by hand.
 

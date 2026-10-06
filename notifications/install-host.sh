@@ -108,5 +108,5 @@ if [ "$test_speech" = 1 ]; then
 fi
 
 echo
-echo "Done. A running relay must be stopped (pkill -f speak-relay.sh) to take a new setting into account;"
+echo "Done. A running relay must be stopped (claude_notify_stop) to take a new setting into account;"
 echo "the next launch of an agent starts it again."

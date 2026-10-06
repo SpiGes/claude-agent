@@ -91,3 +91,15 @@ claude_dev_bash(){
 claude_qualitycheck(){
     _claude_agent qualitycheck claude "$@"
 }
+
+# Stops the speech relay of the spoken notifications, e.g. to apply a new setting (voice, speaker); the next
+# launch of an agent starts it again.
+claude_notify_stop(){
+    # Matches only the relay process itself ("bash <path>/notifications/speak-relay.sh <queue>"), not e.g. an
+    # editor that has the script open
+    if pkill -f '^(/usr/bin/)?bash [^ ]*/notifications/speak-relay\.sh '; then
+        echo "Speech relay stopped."
+    else
+        echo "No speech relay running."
+    fi
+}
