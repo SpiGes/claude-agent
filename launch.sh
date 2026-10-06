@@ -10,9 +10,9 @@ export SHARED_BASE_DIR="${SHARED_BASE_DIR:-$HOME/.agents/shared}"
 export AGENT_USER_FILE="${AGENT_USER_FILE:-$AGENT_HOMES_DIR/CLAUDE.user.md}"
 export AGENT_NOTIFY_SPEECH="${AGENT_NOTIFY_SPEECH:-1}"
 export AGENT_NOTIFY_SPEECH_DIR="${AGENT_NOTIFY_SPEECH_DIR:-$AGENT_HOMES_DIR/notifications/speech}"
-export AGENT_VOICE_INPUT="${AGENT_VOICE_INPUT:-0}"
-export AGENT_VOICE_MODE="${AGENT_VOICE_MODE:-hold}"
-export AGENT_VOICE_LANGUAGE="${AGENT_VOICE_LANGUAGE:-}"
+export AGENT_VOICE_INPUT="${AGENT_VOICE_INPUT:-1}"
+export AGENT_VOICE_MODE="${AGENT_VOICE_MODE:-tap}"
+export AGENT_VOICE_LANGUAGE="${AGENT_VOICE_LANGUAGE:-french}"
 
 # Name that starts each notification of an agent: the name of its workspace folder, or of the folder
 # above it when the workspace is a "branch" folder (e.g. backend/branch gives "backend"). AGENT_NOTIFY_NAME
@@ -66,8 +66,9 @@ _claude_agent(){
         fi
     fi
 
-    # Voice input (/voice, see README): opt-in, since every process of the container can then record the
-    # microphone. Only the WSLg audio socket is mounted, not the whole /mnt/wslg folder (display sockets).
+    # Voice input (/voice, see README): enabled by default when WSLg is there; every process of the container
+    # can then record the microphone, so AGENT_VOICE_INPUT=0 disables it. Only the WSLg audio socket is
+    # mounted, not the whole /mnt/wslg folder (display sockets).
     # Dictation is enabled through --settings, since /voice can't write to the settings.json of the
     # profile (read-only mount). AGENT_VOICE_LANGUAGE also sets the response language of Claude Code.
     local -a voice_args=() voice_settings=()
@@ -82,7 +83,7 @@ _claude_agent(){
                 voice_settings=(--settings "$settings}")
             fi
         else
-            echo "Voice input disabled: /mnt/wslg/PulseServer not found (WSLg isn't active)." >&2
+            echo "Voice input disabled: /mnt/wslg/PulseServer not found (WSLg isn't active), or set AGENT_VOICE_INPUT=0." >&2
         fi
     fi
 
