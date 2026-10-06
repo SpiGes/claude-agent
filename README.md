@@ -158,7 +158,7 @@ The script installs `pulseaudio-utils`, `espeak-ng`, and `pipx` (with `sudo`), t
 
 - WSLg must be active: the script stops when `/mnt/wslg/PulseServer` doesn't exist.
 - pip doesn't read the proxy settings of apt. When no proxy is given to pip (`https_proxy`, or a `pip.conf`), the script uses the proxy of apt for the piper installation and the voice download only, with the system CA bundle, since the corporate proxy re-signs the HTTPS traffic. No configuration file is changed.
-- Another voice (e.g. `de_DE-thorsten-medium`, `fr_FR-tom-medium`, see the piper documentation) is added with `install-speech-host.sh --voice <name>`; the script then shows the `SPEAK_RELAY_PIPER_MODEL` line to add to `~/.bashrc`.
+- Another voice (e.g. `de_DE-thorsten-medium`, `fr_FR-tom-medium`, see the piper documentation) is added with `install-speech-host.sh --voice <name>`; it can then be chosen from an agent (see "Choosing the voice" below), or made the default voice with `SPEAK_RELAY_PIPER_MODEL`.
 - espeak-ng alone is enough, but its voice is robotic. piper is used as soon as `~/.local/bin/piper`, its voice model, and `paplay` are found.
 
 ### Settings
@@ -171,6 +171,7 @@ Exported in `~/.bashrc`, before `launch.sh` is sourced:
 | `AGENT_NOTIFY_SPEECH_DIR` | `$AGENT_HOMES_DIR/notifications/speech` | Speech queue folder on the host |
 | `AGENT_NOTIFY_NAME` | Workspace name | Name that starts each message |
 | `SPEAK_RELAY_PIPER_MODEL` | `~/.local/share/piper-voices/fr_FR-siwis-medium.onnx` | piper voice model |
+| `SPEAK_RELAY_PIPER_VOICES_DIR` | `~/.local/share/piper-voices` | Folder of the piper voices that can be chosen from an agent |
 | `SPEAK_RELAY_PIPER_SPEAKER` | First speaker (`0`) | Speaker id, for a model with several speakers (e.g. `1` for Pierre in `fr_FR-upmc-medium`, whose speaker `0` is Jessica); the ids are in the `speaker_id_map` of the model `.onnx.json` file |
 | `SPEAK_RELAY_PIPER` | `~/.local/bin/piper` | piper executable |
 | `SPEAK_RELAY_ESPEAK_VOICE` | `fr` | espeak-ng voice |
@@ -186,6 +187,14 @@ Two hooks of the dev profile speak a fixed text, set in the `.env` file, since t
 A text can't contain an apostrophe (`'`): bash reads it as a quote in the hook command, which then fails.
 
 The relay reads its settings when it starts: after a change, it's stopped with `claude_notify_speech_stop` (defined in `launch.sh`) and started again by the next launch of an agent.
+
+### Choosing the voice
+
+From a session of the dev profile, `/notif-speech-voices` lists the piper voices installed on the host, with their speakers, and the current voice; `/notif-speech-voice <voice> [<speaker>]` chooses one (the speaker is given by id or by name, e.g. `/notif-speech-voice fr_FR-upmc-medium pierre`), and `/notif-speech-voice default` goes back to the default voice of the host (`SPEAK_RELAY_PIPER_MODEL`, `SPEAK_RELAY_PIPER_SPEAKER`).
+
+- The relay writes the list of the voices of `SPEAK_RELAY_PIPER_VOICES_DIR` to `.voices` in the speech queue folder, when it starts and whenever a voice is added or removed. The choice is written to `.voice` in the same folder, and read by the relay for each message: it applies at once, to every agent, and is kept until it's changed.
+- Since `.voice` comes from the container, the relay only accepts a voice name (letters, digits, `_` and `-`) found in its voices folder, never a path: an invalid or missing voice falls back to the default one, with a line in the relay log.
+- A voice is installed on the host only (`install-speech-host.sh --voice <name>`), never from an agent. With espeak-ng instead of piper, the voice can't be chosen.
 
 ### Muting
 

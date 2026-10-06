@@ -93,7 +93,8 @@ step "Check"
 default_model="$voices_dir/fr_FR-siwis-medium.onnx"
 model="${SPEAK_RELAY_PIPER_MODEL:-$default_model}"
 if [ "$voices_dir/$voice.onnx" != "$model" ]; then
-    echo "The relay uses $model. To use $voice, add before launch.sh is sourced in ~/.bashrc:"
+    echo "The default voice of the relay is $model. $voice can be chosen from an agent with"
+    echo "/notif-speech-voice $voice, or made the default voice by adding before launch.sh is sourced in ~/.bashrc:"
     echo "  export SPEAK_RELAY_PIPER_MODEL=\"$voices_dir/$voice.onnx\""
 fi
 "$relay" --check || { echo "no speech engine found by the relay" >&2; exit 1; }
