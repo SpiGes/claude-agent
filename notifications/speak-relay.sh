@@ -8,7 +8,7 @@
 # <queue>/.voices, and uses the voice named in <queue>/.voice when there's one (written by
 # agent-notify --speech-voice). Since that file comes from the container, only a voice name is accepted
 # (letters, digits, _ and -), looked up in the voices folder, never a path; an invalid or missing voice falls
-# back to the default one.
+# back to the default one. When the default voice isn't installed, the first installed voice is used instead.
 #
 # Everything in the queue folder may come from the container, which mustn't make the relay read or write a
 # file of the host: a message is first moved to a private folder, and only read when it's a regular file,
@@ -20,7 +20,8 @@
 #
 # Settings (environment):
 #   SPEAK_RELAY_PIPER          piper executable (default ~/.local/bin/piper)
-#   SPEAK_RELAY_PIPER_MODEL    piper voice model, .onnx file (default ~/.local/share/piper-voices/fr_FR-siwis-medium.onnx)
+#   SPEAK_RELAY_PIPER_MODEL    default piper voice model, .onnx file (default ~/.local/share/piper-voices/fr_FR-siwis-medium.onnx;
+#                              the first voice of the voices folder when it isn't installed)
 #   SPEAK_RELAY_PIPER_SPEAKER  speaker id, for a model with several speakers (default: the first one, 0)
 #   SPEAK_RELAY_PIPER_VOICES_DIR  folder of the piper voices that can be chosen (default ~/.local/share/piper-voices)
 #   SPEAK_RELAY_ESPEAK_VOICE   espeak-ng voice (default fr)
@@ -36,6 +37,16 @@ select_engine(){
     voices_dir="${SPEAK_RELAY_PIPER_VOICES_DIR:-$HOME/.local/share/piper-voices}"
     espeak_voice="${SPEAK_RELAY_ESPEAK_VOICE:-fr}"
 
+    if [ ! -f "$piper_model" ]; then
+        local model
+        for model in "$voices_dir"/*.onnx; do
+            if [ -f "$model" ] && [ -f "$model.json" ]; then
+                piper_model="$model"
+                piper_speaker=""
+                break
+            fi
+        done
+    fi
     if [ -x "$piper_bin" ] && [ -f "$piper_model" ] && command -v paplay >/dev/null; then
         engine=piper
     elif command -v espeak-ng >/dev/null; then

@@ -160,7 +160,7 @@ The script installs `pulseaudio-utils`, `espeak-ng`, and `pipx` (with `sudo`), t
 - The voice is downloaded with curl, which shows the progress and gives up when the transfer stalls. Its files are checked against the MD5 checksums of the piper voice catalog at each run, and downloaded again when they're damaged (e.g. an incomplete download); `--force` downloads them again in any case. The voice is then checked by a synthesis, also with `--no-test`.
 - pip doesn't read the proxy settings of apt, and the voice download (curl) doesn't read the ones of pip. A proxy can be given with `--proxy <url>`, which takes precedence over any other setting; otherwise, the script takes it from `https_proxy`, else from a `pip.conf`, else from apt, and gives it to both. In every case, the proxy only applies to the piper installation and the voice download, with the system CA bundle, since the corporate proxy re-signs the HTTPS traffic. No configuration file is changed. A proxy URL with credentials given with `--proxy` is kept in the shell history: a `pip.conf` or the apt settings are preferable in that case.
 - Another voice (e.g. `de_DE-thorsten-medium`, `fr_FR-tom-medium`, see the piper documentation) is added with `install-speech-host.sh --voice <name>`; it can then be chosen from an agent (see "Choosing the voice" below), or made the default voice with `SPEAK_RELAY_PIPER_MODEL`.
-- espeak-ng alone is enough, but its voice is robotic. piper is used as soon as `~/.local/bin/piper`, its voice model, and `paplay` are found.
+- espeak-ng alone is enough, but its voice is robotic. piper is used as soon as `~/.local/bin/piper`, a voice, and `paplay` are found.
 
 ### Settings
 
@@ -171,7 +171,7 @@ Exported in `~/.bashrc`, before `launch.sh` is sourced:
 | `AGENT_NOTIFY_SPEECH` | `1` | `0`: `launch.sh` neither starts the relay nor mounts the queue folder, so the agents launched afterwards don't notify. A relay already running and the agents launched before aren't affected (see `claude_notify_speech_stop`) |
 | `AGENT_NOTIFY_SPEECH_DIR` | `$AGENT_HOMES_DIR/notifications/speech` | Speech queue folder on the host |
 | `AGENT_NOTIFY_NAME` | Workspace name | Name that starts each message |
-| `SPEAK_RELAY_PIPER_MODEL` | `~/.local/share/piper-voices/fr_FR-siwis-medium.onnx` | piper voice model |
+| `SPEAK_RELAY_PIPER_MODEL` | `~/.local/share/piper-voices/fr_FR-siwis-medium.onnx` | Default piper voice model; when it isn't installed, the first voice of `SPEAK_RELAY_PIPER_VOICES_DIR` is used |
 | `SPEAK_RELAY_PIPER_VOICES_DIR` | `~/.local/share/piper-voices` | Folder of the piper voices that can be chosen from an agent |
 | `SPEAK_RELAY_PIPER_SPEAKER` | First speaker (`0`) | Speaker id, for a model with several speakers (e.g. `1` for Pierre in `fr_FR-upmc-medium`, whose speaker `0` is Jessica); the ids are in the `speaker_id_map` of the model `.onnx.json` file |
 | `SPEAK_RELAY_PIPER` | `~/.local/bin/piper` | piper executable |
