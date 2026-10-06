@@ -157,7 +157,7 @@ From WSL2, once:
 The script installs `pulseaudio-utils`, `espeak-ng`, and `pipx` (with `sudo`), then piper (`pipx install piper-tts`) and the French voice `fr_FR-siwis-medium`, and ends with a spoken test sentence. Each step is skipped when it's already done, so the script can be run again.
 
 - WSLg must be active: the script stops when `/mnt/wslg/PulseServer` doesn't exist.
-- pip doesn't read the proxy settings of apt. When no proxy is given to pip (`https_proxy`, or a `pip.conf`), the script uses the proxy of apt for the piper installation and the voice download only, with the system CA bundle, since the corporate proxy re-signs the HTTPS traffic. No configuration file is changed.
+- pip doesn't read the proxy settings of apt. A proxy can be given with `--proxy <url>`, which takes precedence over any other setting; otherwise, when no proxy is given to pip (`https_proxy`, or a `pip.conf`), the script uses the proxy of apt. In every case, the proxy only applies to the piper installation and the voice download, with the system CA bundle, since the corporate proxy re-signs the HTTPS traffic. No configuration file is changed. A proxy URL with credentials given with `--proxy` is kept in the shell history: a `pip.conf` or the apt settings are preferable in that case.
 - Another voice (e.g. `de_DE-thorsten-medium`, `fr_FR-tom-medium`, see the piper documentation) is added with `install-speech-host.sh --voice <name>`; it can then be chosen from an agent (see "Choosing the voice" below), or made the default voice with `SPEAK_RELAY_PIPER_MODEL`.
 - espeak-ng alone is enough, but its voice is robotic. piper is used as soon as `~/.local/bin/piper`, its voice model, and `paplay` are found.
 

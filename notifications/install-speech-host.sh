@@ -3,22 +3,28 @@
 # container): the audio tools, espeak-ng, piper, and a piper voice. Each step is skipped when it's already
 # done, so the script can be run again, e.g. to add another voice.
 #
-# Usage: install-speech-host.sh [--voice <name>] [--no-test]
+# Usage: install-speech-host.sh [--voice <name>] [--proxy <url>] [--no-test]
 #   --voice <name>   piper voice to download (default fr_FR-siwis-medium), e.g. de_DE-thorsten-medium
+#   --proxy <url>    proxy for the piper installation and the voice download, e.g. http://proxy.example:8080;
+#                    it takes precedence over any other proxy setting. A URL with credentials is kept in the
+#                    shell history: the proxy settings below are preferable in that case
 #   --no-test        doesn't speak the test sentence at the end
 #
-# pip doesn't read the proxy settings of apt. When no proxy is given to pip (https_proxy, or a pip.conf), the
-# proxy of apt is used for the piper installation and the voice download only, with the system CA bundle,
-# since the corporate proxy re-signs the HTTPS traffic. No configuration file is changed.
+# pip doesn't read the proxy settings of apt. Without --proxy, when no proxy is given to pip (https_proxy, or
+# a pip.conf), the proxy of apt is used. In every case, the proxy only applies to the piper installation and
+# the voice download, with the system CA bundle, since the corporate proxy re-signs the HTTPS traffic. No
+# configuration file is changed.
 set -euo pipefail
 
 voice=fr_FR-siwis-medium
 test_speech=1
+proxy=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --voice) voice="${2:?--voice needs a voice name}"; shift 2 ;;
+        --proxy) proxy="${2:?--proxy needs a proxy URL}"; shift 2 ;;
         --no-test) test_speech=0; shift ;;
-        *) echo "Usage: install-speech-host.sh [--voice <name>] [--no-test]" >&2; exit 2 ;;
+        *) echo "Usage: install-speech-host.sh [--voice <name>] [--proxy <url>] [--no-test]" >&2; exit 2 ;;
     esac
 done
 
@@ -57,16 +63,23 @@ pip_has_proxy(){
     done
     return 1
 }
-if pip_has_proxy; then
+# The proxy values aren't printed: they may hold credentials
+use_proxy(){
+    # PIP_PROXY takes precedence over a pip.conf; https_proxy is read by the voice download
+    export PIP_PROXY="$1" https_proxy="$1" http_proxy="$1"
+    export PIP_CERT="${PIP_CERT:-/etc/ssl/certs/ca-certificates.crt}"
+}
+if [ -n "$proxy" ]; then
+    use_proxy "$proxy"
+    echo "the proxy given with --proxy is used for this installation"
+elif pip_has_proxy; then
     echo "already set for pip"
 else
     apt_http_proxy="" apt_https_proxy=""
     eval "$(apt-config shell apt_http_proxy Acquire::http::Proxy apt_https_proxy Acquire::https::Proxy)"
     apt_proxy="${apt_https_proxy:-$apt_http_proxy}"
     if [ -n "$apt_proxy" ]; then
-        # The value isn't printed: it may hold credentials
-        export https_proxy="$apt_proxy" http_proxy="$apt_proxy"
-        export PIP_CERT="${PIP_CERT:-/etc/ssl/certs/ca-certificates.crt}"
+        use_proxy "$apt_proxy"
         echo "the proxy of apt is used for this installation"
     else
         echo "no proxy found: direct connection"
