@@ -10,6 +10,9 @@ export SHARED_BASE_DIR="${SHARED_BASE_DIR:-$HOME/.agents/shared}"
 export AGENT_USER_FILE="${AGENT_USER_FILE:-$AGENT_HOMES_DIR/CLAUDE.user.md}"
 export AGENT_NOTIFY_SPEECH="${AGENT_NOTIFY_SPEECH:-1}"
 export AGENT_NOTIFY_SPEECH_DIR="${AGENT_NOTIFY_SPEECH_DIR:-$AGENT_HOMES_DIR/notifications/speech}"
+export AGENT_VOICE_INPUT="${AGENT_VOICE_INPUT:-1}"
+export AGENT_VOICE_MODE="${AGENT_VOICE_MODE:-tap}"
+export AGENT_VOICE_LANGUAGE="${AGENT_VOICE_LANGUAGE:-french}"
 
 # Name that starts each notification of an agent: the name of its workspace folder, or of the folder
 # above it when the workspace is a "branch" folder (e.g. backend/branch gives "backend"). AGENT_NOTIFY_NAME
@@ -63,6 +66,27 @@ _claude_agent(){
         fi
     fi
 
+    # Voice input (/voice, see README): enabled by default when WSLg is there; every process of the container
+    # can then record the microphone, so AGENT_VOICE_INPUT=0 disables it. Only the WSLg audio socket is
+    # mounted, not the whole /mnt/wslg folder (display sockets).
+    # Dictation is enabled through --settings, since /voice can't write to the settings.json of the
+    # profile (read-only mount). AGENT_VOICE_LANGUAGE also sets the response language of Claude Code.
+    local -a voice_args=() voice_settings=()
+    if [ "$AGENT_VOICE_INPUT" = "1" ]; then
+        if [[ ! "$AGENT_VOICE_MODE" =~ ^(hold|tap)$ ]] || [[ ! "$AGENT_VOICE_LANGUAGE" =~ ^[A-Za-z-]*$ ]]; then
+            echo "Voice input disabled: AGENT_VOICE_MODE must be hold or tap, AGENT_VOICE_LANGUAGE a language name or code." >&2
+        elif [ -S /mnt/wslg/PulseServer ]; then
+            voice_args=(-v /mnt/wslg/PulseServer:/mnt/wslg/PulseServer -e PULSE_SERVER=unix:/mnt/wslg/PulseServer)
+            if [ "$command" = "claude" ]; then
+                local settings="{\"voice\":{\"enabled\":true,\"mode\":\"$AGENT_VOICE_MODE\"}"
+                [ -z "$AGENT_VOICE_LANGUAGE" ] || settings+=",\"language\":\"$AGENT_VOICE_LANGUAGE\""
+                voice_settings=(--settings "$settings}")
+            fi
+        else
+            echo "Voice input disabled: /mnt/wslg/PulseServer not found (WSLg isn't active), or set AGENT_VOICE_INPUT=0." >&2
+        fi
+    fi
+
     docker run -it --rm --user $(id -u):$(id -g) \
       -e HOME=/root \
       -e NUGET_PACKAGES=/home/$USER/.nuget/packages \
@@ -75,9 +99,10 @@ _claude_agent(){
       "${mcp_mount[@]}" \
       "${context_mounts[@]}" \
       "${notify_args[@]}" \
+      "${voice_args[@]}" \
       -v "$PWD:/workspace" \
       -v $SHARED_BASE_DIR:/shared \
-      bfs-claude-agent "$command" "${mcp_args[@]}" "$@"
+      bfs-claude-agent "$command" "${mcp_args[@]}" "${voice_settings[@]}" "$@"
 }
 
 claude_dev(){

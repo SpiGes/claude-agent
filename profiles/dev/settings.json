@@ -41,7 +41,12 @@
       "mcp__devops__devops_work_item_comment_delete",
       "mcp__devops__devops_pull_request_delete_comment",
       "mcp__devops__devops_wiki*",
-      "mcp__devops__devops_repository*"
+      "mcp__devops__devops_repository*",
+      "Bash(rec *)",
+      "Bash(sox *)",
+      "Bash(arecord *)",
+      "Bash(parec *)",
+      "Bash(parecord *)"
     ]
   },
   "hooks": {

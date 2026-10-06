@@ -211,6 +211,40 @@ From a session of the dev profile, `/notif-speech-off` mutes the speech notifica
 - `tail -f ~/.local/state/speak-relay.log` shows each message, and the skipped ones
 - From `claude_dev_bash`: `agent-notify "Test"`
 
+## Voice input
+
+The person can dictate prompts with the voice dictation of Claude Code (`/voice`) instead of typing them. It's enabled by default, as soon as WSLg is active on the host.
+
+### How it works
+
+- With `AGENT_VOICE_INPUT=1` (default), `launch.sh` mounts the WSLg audio socket (`/mnt/wslg/PulseServer`) into the container and sets `PULSE_SERVER`. Only the audio socket is mounted, not the whole `/mnt/wslg` folder, which also holds the display sockets. When the socket isn't found, `launch.sh` prints a warning and starts the agent without voice input.
+- The image records through SoX and its PulseAudio backend (`AUDIODRIVER=pulseaudio`), since the container has no ALSA device.
+- `launch.sh` enables the dictation with `claude --settings`: `/voice` and `/config` can't keep a setting, since the `settings.json` of the profile is mounted read-only. The mode and the language are therefore set with the variables below, not in a session.
+- The audio is streamed to Anthropic for the transcription, as the prompts are; it isn't processed locally. The transcription doesn't count toward the usage limits.
+
+### Usage
+
+In tap mode (default), with an empty prompt: `Space` starts the recording, `Space` again stops it, and the prompt is sent at once when it has at least three words; a shorter transcript stays in the prompt. `Esc` cancels a recording. A recording also stops after 15 seconds of silence or two minutes. In hold mode, the recording runs while `Space` is held, and the transcript waits for `Enter`.
+
+### Settings
+
+Exported in `~/.bashrc`, before `launch.sh` is sourced:
+
+| Variable | Default | Effect |
+|---|---|---|
+| `AGENT_VOICE_INPUT` | `1` | `0` disables the voice input: no audio socket is mounted |
+| `AGENT_VOICE_MODE` | `tap` | `tap` or `hold` |
+| `AGENT_VOICE_LANGUAGE` | `french` | Dictation language (name or code, e.g. `german`, `de`). It also sets the response language of Claude Code |
+
+### Security
+
+With the voice input enabled, every process of the container can record the microphone for the whole session, not only the dictation of Claude Code. The dev profile `CLAUDE.md` forbids the agent to record it with its own commands, and `settings.json` denies the usual recording commands (`rec`, `sox`, `arecord`, `parec`, `parecord`); a script could still bypass these rules, so `AGENT_VOICE_INPUT=0` remains the only real barrier.
+
+### Troubleshooting
+
+- `Voice mode could not find a working audio recorder`: the audio socket isn't mounted, e.g. the agent wasn't started from WSL2, or `launch.sh` printed a warning.
+- The commands of this section are run in the WSL2 terminal, not in Git Bash: Git Bash turns `/mnt/wslg` into a Windows path, and the mount is then empty.
+
 ## Usage
 
 | Command | Effect |
