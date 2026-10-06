@@ -167,7 +167,7 @@ Exported in `~/.bashrc`, before `launch.sh` is sourced:
 
 | Variable | Default | Effect |
 |---|---|---|
-| `AGENT_NOTIFY_SPEECH` | `1` | `0` disables the feature |
+| `AGENT_NOTIFY_SPEECH` | `1` | `0`: `launch.sh` neither starts the relay nor mounts the queue folder, so the agents launched afterwards don't notify. A relay already running and the agents launched before aren't affected (see `claude_notify_stop`) |
 | `AGENT_NOTIFY_DIR` | `$AGENT_HOMES_DIR/notifications` | Queue folder on the host |
 | `AGENT_NOTIFY_NAME` | Workspace name | Name that starts each message |
 | `SPEAK_RELAY_PIPER_MODEL` | `~/.local/share/piper-voices/fr_FR-siwis-medium.onnx` | piper voice model |
@@ -186,6 +186,12 @@ Two hooks of the dev profile speak a fixed text, set in the `.env` file, since t
 A text can't contain an apostrophe (`'`): bash reads it as a quote in the hook command, which then fails.
 
 The relay reads its settings when it starts: after a change, it's stopped with `claude_notify_stop` (defined in `launch.sh`) and started again by the next launch of an agent.
+
+### Muting
+
+From a session of the dev profile, `/notif-off` mutes the spoken notifications and `/notif-on` unmutes them. The mute is global: `agent-notify --off` writes a `.muted` file to the queue folder, shared by every agent of the person, and `agent-notify` queues nothing while it exists. It applies at once to the agents already running, covers the greeting and the permission prompts, and is kept until `/notif-on`, also after a restart. The relay keeps running, idle.
+
+`AGENT_NOTIFY_SPEECH` and the mute work at two levels: the first decides, at each launch, whether an agent is connected to the relay at all; the second silences every connected agent without disconnecting it.
 
 ### Check
 

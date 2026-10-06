@@ -2,14 +2,39 @@
 # Queues a spoken notification for the relay on the WSL host (notifications/speak-relay.sh), run in the
 # container. The text is prefixed with the name of the agent workspace (AGENT_NOTIFY_NAME), so that several
 # agents running at the same time can be told apart.
-# Does nothing when spoken notifications aren't set up for this container (see launch.sh).
+# Does nothing when spoken notifications aren't set up for this container (see launch.sh), or when they're
+# muted. The mute is global: a .muted file in the queue folder, shared by every agent of the person, kept
+# until it's removed with --on.
 #
-# Usage: agent-notify <text>
+# Usage: agent-notify <text>      queues the text, unless muted
+#        agent-notify --off       mutes the spoken notifications of every agent
+#        agent-notify --on        unmutes them
+#        agent-notify --status    prints the current state
 set -euo pipefail
 
-[ $# -gt 0 ] || { echo "Usage: agent-notify <text>" >&2; exit 2; }
+[ $# -gt 0 ] || { echo "Usage: agent-notify <text> | --off | --on | --status" >&2; exit 2; }
 dir="${AGENT_NOTIFY_DIR:-}"
-{ [ -n "$dir" ] && [ -d "$dir" ]; } || exit 0
+set_up=0
+{ [ -n "$dir" ] && [ -d "$dir" ]; } && set_up=1
+muted_file="$dir/.muted"
+
+status(){
+    if [ "$set_up" = 0 ]; then
+        echo "Spoken notifications aren't set up for this agent (AGENT_NOTIFY_SPEECH=0, or no speech engine on the host when it was launched)."
+    elif [ -e "$muted_file" ]; then
+        echo "Spoken notifications are muted for every agent."
+    else
+        echo "Spoken notifications are on for every agent."
+    fi
+}
+
+case "$1" in
+    --off) [ "$set_up" = 0 ] || touch "$muted_file"; status; exit 0 ;;
+    --on) [ "$set_up" = 0 ] || rm -f -- "$muted_file"; status; exit 0 ;;
+    --status) status; exit 0 ;;
+esac
+
+{ [ "$set_up" = 1 ] && [ ! -e "$muted_file" ]; } || exit 0
 
 text="$*"
 [ -z "${AGENT_NOTIFY_NAME:-}" ] || text="$AGENT_NOTIFY_NAME: $text"
