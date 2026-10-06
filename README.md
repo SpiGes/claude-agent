@@ -195,6 +195,7 @@ From a session of the dev profile, `/notif-speech-voices` lists the piper voices
 
 - The relay writes the list of the voices of `SPEAK_RELAY_PIPER_VOICES_DIR` to `.voices` in the speech queue folder, when it starts and whenever a voice is added or removed. The choice is written to `.voice` in the same folder, and read by the relay for each message: it applies at once, to every agent, and is kept until it's changed.
 - Since `.voice` comes from the container, the relay only accepts a voice name (letters, digits, `_` and `-`) found in its voices folder, never a path: an invalid or missing voice falls back to the default one, with a line in the relay log.
+- More generally, the relay never follows a symbolic link of the queue folder, so that the container can't make it read or write a file of the host: a message that isn't a regular file is ignored, and `.voices` is always written to a new file.
 - A voice is installed on the host only (`install-speech-host.sh --voice <name>`), never from an agent. With espeak-ng instead of piper, the voice can't be chosen.
 
 ### Muting

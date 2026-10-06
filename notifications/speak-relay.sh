@@ -10,6 +10,11 @@
 # (letters, digits, _ and -), looked up in the voices folder, never a path; an invalid or missing voice falls
 # back to the default one.
 #
+# Everything in the queue folder may come from the container, which mustn't make the relay read or write a
+# file of the host: a message is first moved to a private folder, and only read when it's a regular file,
+# not a symbolic link; .voice is only read when it's a regular file; .voices is written to a new file
+# (mktemp) renamed afterwards, never to an existing name.
+#
 # Usage: speak-relay.sh <queue folder>   runs the relay
 #        speak-relay.sh --check          exits with 0 when a speech engine is available
 #
@@ -58,7 +63,9 @@ speak(){
 # otherwise. Prints the model path and the speaker id (possibly empty) on two lines.
 chosen_voice(){
     local name="" speaker=""
-    [ -f "$queue/.voice" ] && read -r name speaker < "$queue/.voice"
+    if [ -f "$queue/.voice" ] && [ ! -L "$queue/.voice" ]; then
+        read -r name speaker < "$queue/.voice"
+    fi
     if [ -n "$name" ]; then
         if [[ "$name" =~ ^[A-Za-z0-9_-]+$ ]] && [[ -z "$speaker" || "$speaker" =~ ^[0-9]+$ ]] \
             && [ -f "$voices_dir/$name.onnx" ]; then
@@ -75,7 +82,8 @@ chosen_voice(){
 #   default <voice name> <speaker id or ->
 #   voice <voice name> <"<id>:<speaker name>" list, or ->     (one line per installed piper voice)
 write_voices_list(){
-    local list="$queue/.voices" model name speakers
+    local list model name speakers
+    list="$(mktemp "$queue/.voices.XXXXXX")" || return
     {
         echo "engine $engine"
         if [ "$engine" = piper ]; then
@@ -92,7 +100,7 @@ print(" ".join(f"{i}:{n.replace(chr(32), chr(95))}" for n, i in sorted(speakers.
                 echo "voice ${name%.onnx} ${speakers:--}"
             done
         fi
-    } > "$list.tmp" && mv -f "$list.tmp" "$list"
+    } > "$list" && chmod 644 "$list" && mv -f "$list" "$queue/.voices"
 }
 
 run(){
@@ -106,10 +114,10 @@ run(){
     fi
 
     select_engine || { echo "speak-relay: neither piper (with its voice model and paplay) nor espeak-ng is available" >&2; exit 1; }
-    if [ "$engine" = piper ]; then
-        wav="$(mktemp --suffix .wav)"
-        trap 'rm -f -- "$wav"' EXIT
-    fi
+    # Private folder, out of the reach of the container
+    private="$(mktemp -d)"
+    trap 'rm -rf -- "$private"' EXIT
+    wav="$private/speech.wav"
     echo "$(date '+%F %T') watching $queue with $engine"
 
     shopt -s nullglob
@@ -123,9 +131,16 @@ run(){
         fi
         # Names start with a timestamp: the glob order is the order of arrival
         for file in "$queue"/*.txt; do
-            text="$(<"$file")"
-            age=$(( $(date +%s) - $(stat -c %Y "$file") ))
-            rm -f -- "$file"
+            # Moved first: once in the private folder, the container can't replace it with a link anymore
+            mv -f -- "$file" "$private/message" 2>/dev/null || continue
+            if [ -L "$private/message" ] || [ ! -f "$private/message" ]; then
+                echo "$(date '+%F %T') ignored: ${file##*/} isn't a regular file" >&2
+                rm -rf -- "$private/message"
+                continue
+            fi
+            text="$(<"$private/message")"
+            age=$(( $(date +%s) - $(stat -c %Y "$private/message") ))
+            rm -f -- "$private/message"
             [ -n "${text//[[:space:]]/}" ] || continue
             if [ "$age" -gt "$max_age" ]; then
                 echo "$(date '+%F %T') skipped (${age}s old): $text"
