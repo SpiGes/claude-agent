@@ -161,6 +161,7 @@ The script installs `pulseaudio-utils`, `espeak-ng`, and `pipx` (with `sudo`), t
 - pip doesn't read the proxy settings of apt, and the voice download (curl) doesn't read the ones of pip. A proxy can be given with `--proxy <url>`, which takes precedence over any other setting; otherwise, the script takes it from `https_proxy`, else from a `pip.conf`, else from apt, and gives it to both. In every case, the proxy only applies to the piper installation and the voice download, with the system CA bundle, since the corporate proxy re-signs the HTTPS traffic. No configuration file is changed. A proxy URL with credentials given with `--proxy` is kept in the shell history: a `pip.conf` or the apt settings are preferable in that case.
 - Another voice (e.g. `de_DE-thorsten-medium`, `fr_FR-tom-medium`, see the piper documentation) is added with `install-speech-host.sh --voice <name>`; it can then be chosen from an agent (see "Choosing the voice" below), or made the default voice with `SPEAK_RELAY_PIPER_MODEL`.
 - espeak-ng alone is enough, but its voice is robotic. piper is used as soon as `~/.local/bin/piper`, a voice, and `paplay` are found.
+- Without access to the voice catalog (no network, wrong proxy), a voice already installed is only checked by the synthesis, with a warning; a missing voice can't be downloaded.
 
 ### Settings
 

@@ -62,7 +62,7 @@ else
     sudo apt-get install -y "${missing[@]}"
 fi
 
-step "Proxy for pip"
+step "Proxy"
 # Prints the proxy of the first pip.conf that sets one, the user files first, as pip reads them
 pip_conf_proxy(){
     local file
@@ -118,9 +118,17 @@ curl_args=(-fL --retry 3 --connect-timeout 30 --speed-limit 1000 --speed-time 60
 md5_of(){ md5sum < "$1" | cut -d' ' -f1; }
 
 catalog="$(mktemp)"; temp_files+=("$catalog")
+voice_files=""
 echo "reading the voice catalog"
-curl "${curl_args[@]}" -sS -o "$catalog" "$voices_url/voices.json"
-if ! voice_files="$(python3 - "$catalog" "$voice" <<'PY'
+if ! curl "${curl_args[@]}" -sS -o "$catalog" "$voices_url/voices.json"; then
+    # Without the catalog, a voice already there is only checked by the synthesis below
+    if [ "$force" = 0 ] && [ -f "$voices_dir/$voice.onnx" ] && [ -f "$voices_dir/$voice.onnx.json" ]; then
+        echo "warning: the voice catalog can't be read, the checksums of the voice files aren't checked" >&2
+    else
+        echo "The voice catalog can't be read ($voices_url/voices.json): the voice can't be downloaded." >&2
+        exit 1
+    fi
+elif ! voice_files="$(python3 - "$catalog" "$voice" <<'PY'
 import json, sys
 entry = json.load(open(sys.argv[1])).get(sys.argv[2])
 if not entry:
@@ -136,6 +144,7 @@ fi
 
 mkdir -p "$voices_dir"
 while read -r path md5; do
+    [ -n "$path" ] || continue
     file="${path##*/}"
     target="$voices_dir/$file"
     if [ "$force" = 0 ] && [ -f "$target" ] && [ "$(md5_of "$target")" = "$md5" ]; then
