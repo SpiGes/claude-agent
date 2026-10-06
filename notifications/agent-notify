@@ -67,7 +67,11 @@ list_voices(){
     read -r _ default_name default_speaker < <(grep '^default ' "$speech_voices_file")
     if [ -f "$speech_voice_file" ]; then
         read -r name speaker < "$speech_voice_file"
-        echo "Current voice: $name${speaker:+, speaker $speaker} (chosen with /notif-speech-voice)"
+        if grep -q "^voice $name " "$speech_voices_file"; then
+            echo "Current voice: $name${speaker:+, speaker $speaker} (chosen with /notif-speech-voice)"
+        else
+            echo "Current voice: $default_name (default of the host: $name, chosen with /notif-speech-voice, isn't installed anymore)"
+        fi
     else
         echo "Current voice: $default_name$( [ "$default_speaker" = "-" ] || echo ", speaker $default_speaker") (default of the host)"
     fi

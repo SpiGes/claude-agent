@@ -143,7 +143,8 @@ spoken notification is sent with `agent-notify "<text>"`, as a colleague would d
 - No markdown, paths, or long identifiers, which don't read well aloud
 
 `agent-notify` does nothing when spoken notifications aren't set up on the host. A permission prompt
-is announced by a hook, not by the agent.
+is announced by a hook, not by the agent. The options of `agent-notify` (mute, voice) are only used
+through the `notif-speech-*` skills, at the request of the user, never on the agent's own initiative.
 
 ## Instruction governance
 
