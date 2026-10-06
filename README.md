@@ -31,7 +31,7 @@ git clone <url-of-this-repository> ~/.agents/bfs-claude-agent
 ```bash
 docker build -t bfs-claude-agent ~/.agents/bfs-claude-agent
 ```
-Needed again only after a change to the Dockerfile, to `entrypoint.sh`, or to the certificates under `certs/`.
+Needed again only after a change to the Dockerfile, to `entrypoint.sh`, to `notifications/agent-notify`, or to the certificates under `certs/`.
 
 ### 3. Create the personal folders
 
@@ -134,6 +134,83 @@ git -C <github-repo> push --dry-run origin HEAD # authenticates with the Git tok
 git -C <github-repo> config user.email          # the noreply address
 ```
 
+## Optional: speech notifications
+
+The agent tells the person, with a spoken message, when the requested work is finished or when it's blocked on a decision (e.g. "backend: the review of PR 44008 is finished, three points to check"). Intermediate steps, like a build or a test run, aren't announced. The instruction is given in the dev profile `CLAUDE.md`. Two hooks of its `settings.json` add a greeting when a new session starts, and announce the permission prompts, which the agent can't announce itself.
+
+### How it works
+
+- In the container, `agent-notify "<text>"` writes the text to a file in the queue folder, mounted as `/notifications/speech`. The container gets no audio device and no PulseAudio socket: the WSLg audio server also gives access to the microphone, which the agent doesn't need.
+- On the WSL2 host, `notifications/speak-relay.sh` reads the queue, in the order of arrival, and speaks each message through the WSLg audio, with piper when it's installed, with espeak-ng otherwise. Messages older than 10 minutes are skipped, so that a backlog isn't read out when the relay starts.
+- `launch.sh` starts the relay at each launch of an agent. Only one relay runs per user (`flock` lock): a launch while it's running has no effect. The relay keeps running after the agent ends, until WSL shuts the distribution down.
+- Each message starts with the name of the agent workspace: the folder the agent is started from, or the folder above it when that folder is named `branch` (e.g. `backend` for `backend/branch`). Several agents running at the same time can be told apart.
+- The feature is enabled by default. When no speech engine is found on the host, `launch.sh` prints a warning, mounts no queue folder, and `agent-notify` does nothing.
+
+### Host prerequisites
+
+From WSL2, once:
+
+```bash
+~/.agents/bfs-claude-agent/notifications/install-speech-host.sh
+```
+
+The script installs `pulseaudio-utils`, `espeak-ng`, and `pipx` (with `sudo`), then piper (`pipx install piper-tts`) and the French voice `fr_FR-siwis-medium`, and ends with a spoken test sentence. Each step is skipped when it's already done, so the script can be run again.
+
+- WSLg must be active: the script stops when `/mnt/wslg/PulseServer` doesn't exist.
+- The voice is downloaded with curl, which shows the progress and gives up when the transfer stalls. Its files are checked against the MD5 checksums of the piper voice catalog at each run, and downloaded again when they're damaged (e.g. an incomplete download); `--force` downloads them again in any case. The voice is then checked by a synthesis, also with `--no-test`.
+- pip doesn't read the proxy settings of apt, and the voice download (curl) doesn't read the ones of pip. A proxy can be given with `--proxy <url>`, which takes precedence over any other setting; otherwise, the script takes it from `https_proxy`, else from a `pip.conf`, else from apt, and gives it to both. In every case, the proxy only applies to the piper installation and the voice download, with the system CA bundle, since the corporate proxy re-signs the HTTPS traffic. No configuration file is changed. A proxy URL with credentials given with `--proxy` is kept in the shell history: a `pip.conf` or the apt settings are preferable in that case.
+- Another voice (e.g. `de_DE-thorsten-medium`, `fr_FR-tom-medium`, see the piper documentation) is added with `install-speech-host.sh --voice <name>`; it can then be chosen from an agent (see "Choosing the voice" below), or made the default voice with `SPEAK_RELAY_PIPER_MODEL`.
+- espeak-ng alone is enough, but its voice is robotic. piper is used as soon as `~/.local/bin/piper`, a voice, and `paplay` are found.
+- Without access to the voice catalog (no network, wrong proxy), a voice already installed is only checked by the synthesis, with a warning; a missing voice can't be downloaded.
+
+### Settings
+
+Exported in `~/.bashrc`, before `launch.sh` is sourced:
+
+| Variable | Default | Effect |
+|---|---|---|
+| `AGENT_NOTIFY_SPEECH` | `1` | `0`: `launch.sh` neither starts the relay nor mounts the queue folder, so the agents launched afterwards don't notify. A relay already running and the agents launched before aren't affected (see `claude_notify_speech_stop`) |
+| `AGENT_NOTIFY_SPEECH_DIR` | `$AGENT_HOMES_DIR/notifications/speech` | Speech queue folder on the host |
+| `AGENT_NOTIFY_NAME` | Workspace name | Name that starts each message |
+| `SPEAK_RELAY_PIPER_MODEL` | `~/.local/share/piper-voices/fr_FR-siwis-medium.onnx` | Default piper voice model; when it isn't installed, the first voice of `SPEAK_RELAY_PIPER_VOICES_DIR` is used |
+| `SPEAK_RELAY_PIPER_VOICES_DIR` | `~/.local/share/piper-voices` | Folder of the piper voices that can be chosen from an agent |
+| `SPEAK_RELAY_PIPER_SPEAKER` | First speaker (`0`) | Speaker id, for a model with several speakers (e.g. `1` for Pierre in `fr_FR-upmc-medium`, whose speaker `0` is Jessica); the ids are in the `speaker_id_map` of the model `.onnx.json` file |
+| `SPEAK_RELAY_PIPER` | `~/.local/bin/piper` | piper executable |
+| `SPEAK_RELAY_ESPEAK_VOICE` | `fr` | espeak-ng voice |
+| `SPEAK_RELAY_MAX_AGE` | `600` | Age in seconds above which a message is skipped |
+
+Two hooks of the dev profile speak a fixed text, set in the `.env` file, since the hooks run in the container:
+
+| Variable | Default | Spoken when |
+|---|---|---|
+| `AGENT_NOTIFY_GREETING_TEXT` | `Bonjour, je suis prêt` | A new session starts (not on `--resume`, `/clear`, or a compaction). An empty value disables it |
+| `AGENT_NOTIFY_PERMISSION_TEXT` | `Autorisation requise` | The agent waits for a permission |
+
+A text can't contain an apostrophe (`'`): bash reads it as a quote in the hook command, which then fails.
+
+The relay reads its settings when it starts: after a change, it's stopped with `claude_notify_speech_stop` (defined in `launch.sh`) and started again by the next launch of an agent.
+
+### Choosing the voice
+
+From a session of the dev profile, `/notif-speech-voices` lists the piper voices installed on the host, with their speakers, and the current voice; `/notif-speech-voice <voice> [<speaker>]` chooses one (the speaker is given by id or by name, e.g. `/notif-speech-voice fr_FR-upmc-medium pierre`), and `/notif-speech-voice default` goes back to the default voice of the host (`SPEAK_RELAY_PIPER_MODEL`, `SPEAK_RELAY_PIPER_SPEAKER`).
+
+- The relay writes the list of the voices of `SPEAK_RELAY_PIPER_VOICES_DIR` to `.voices` in the speech queue folder, when it starts and whenever a voice is added or removed. The choice is written to `.voice` in the same folder, and read by the relay for each message: it applies at once, to every agent, and is kept until it's changed.
+- Since `.voice` comes from the container, the relay only accepts a voice name (letters, digits, `_` and `-`) found in its voices folder, never a path: an invalid or missing voice falls back to the default one, with a line in the relay log.
+- More generally, the relay never follows a symbolic link of the queue folder, so that the container can't make it read or write a file of the host: a message that isn't a regular file is ignored, and `.voices` is always written to a new file.
+- A voice is installed on the host only (`install-speech-host.sh --voice <name>`), never from an agent. With espeak-ng instead of piper, the voice can't be chosen.
+
+### Muting
+
+From a session of the dev profile, `/notif-speech-off` mutes the speech notifications and `/notif-speech-on` unmutes them. The mute is global: `agent-notify --speech-off` writes a `.muted` file to the speech queue folder, shared by every agent of the person, and `agent-notify` queues nothing while it exists. It applies at once to the agents already running, covers the greeting and the permission prompts, and is kept until `/notif-speech-on`, also after a restart. The relay keeps running, idle.
+
+`AGENT_NOTIFY_SPEECH` and the mute work at two levels: the first decides, at each launch, whether an agent is connected to the relay at all; the second silences every connected agent without disconnecting it.
+
+### Check
+
+- `pgrep -af speak-relay` shows a single relay
+- `tail -f ~/.local/state/speak-relay.log` shows each message, and the skipped ones
+- From `claude_dev_bash`: `agent-notify "Test"`
+
 ## Usage
 
 | Command | Effect |
@@ -141,6 +218,7 @@ git -C <github-repo> config user.email          # the noreply address
 | `claude_dev` | Starts the agent in general development mode (dev profile), with the Confluence and Azure DevOps MCP servers available |
 | `claude_dev_bash` | Opens a shell in the same environment, without starting Claude Code; useful for testing dotnet build, git status, and similar commands by hand |
 | `claude_qualitycheck` | Starts the agent in review-only mode (qualitycheck profile, read-only, no MCP server) |
+| `claude_notify_speech_stop` | Stops the speech relay of the speech notifications (see "Optional: speech notifications"); the next launch of an agent starts it again |
 
 Each command starts a new container, removed on exit (--rm); nothing needs to be stopped or cleaned up by hand.
 
@@ -206,6 +284,10 @@ bfs-claude-agent/
   Dockerfile
   entrypoint.sh
   launch.sh
+  notifications/
+    agent-notify             (copied into the image)
+    speak-relay.sh           (run on the WSL2 host)
+    install-speech-host.sh   (run once on the WSL2 host)
   certs/
     bit-proxy-ca.pem
     nexus-ca.pem

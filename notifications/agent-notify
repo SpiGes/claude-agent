@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+# Sends a notification of the agent, run in the container. Entry point used by the agent and by the hooks,
+# whatever the channel; the only channel so far is speech: the text is queued for the speech relay on the
+# WSL host (notifications/speak-relay.sh).
+# The text is prefixed with the name of the agent workspace (AGENT_NOTIFY_NAME), so that several agents
+# running at the same time can be told apart.
+#
+# Speech channel: does nothing when it isn't set up for this container (see launch.sh), or when it's muted.
+# The mute is global: a .muted file in the speech queue folder, shared by every agent of the person, kept
+# until it's removed with --speech-on.
+# The voice is chosen among the piper voices installed on the host, listed by the relay in .voices; the
+# choice is global too: a .voice file in the speech queue folder, read by the relay for each message.
+#
+# Usage: agent-notify <text>                                  sends the text
+#        agent-notify --speech-off                            mutes the speech notifications of every agent
+#        agent-notify --speech-on                             unmutes them
+#        agent-notify --speech-voices                         lists the installed voices and the current one
+#        agent-notify --speech-voice <voice> [<speaker>]      chooses the voice (speaker: id or name)
+#        agent-notify --speech-voice default                  goes back to the default voice of the host
+#        agent-notify --status                                prints the current state
+#
+# The voice options print their result, errors included, to the standard output with exit code 0, since
+# they're run by the skills, whose output is shown to the user.
+set -euo pipefail
+
+[ $# -gt 0 ] || { echo "Usage: agent-notify <text> | --speech-off | --speech-on | --speech-voices | --speech-voice <voice> [<speaker>] | --status" >&2; exit 2; }
+speech_dir="${AGENT_NOTIFY_SPEECH_DIR:-}"
+speech_set_up=0
+{ [ -n "$speech_dir" ] && [ -d "$speech_dir" ]; } && speech_set_up=1
+speech_muted_file="$speech_dir/.muted"
+speech_voices_file="$speech_dir/.voices"
+speech_voice_file="$speech_dir/.voice"
+
+status(){
+    if [ "$speech_set_up" = 0 ]; then
+        echo "Speech notifications aren't set up for this agent (AGENT_NOTIFY_SPEECH=0, or no speech engine on the host when it was launched)."
+    elif [ -e "$speech_muted_file" ]; then
+        echo "Speech notifications are muted for every agent."
+    else
+        echo "Speech notifications are on for every agent."
+    fi
+}
+
+# Checks that the voice list of the relay can be used; prints why not otherwise.
+voices_available(){
+    if [ "$speech_set_up" = 0 ]; then
+        status
+    elif [ ! -f "$speech_voices_file" ]; then
+        echo "The list of voices isn't available yet: the speech relay writes it when it starts."
+    elif ! grep -q '^engine piper$' "$speech_voices_file"; then
+        echo "The speech relay uses espeak-ng, not piper: the voice can't be chosen (see install-speech-host.sh)."
+    else
+        return 0
+    fi
+    return 1
+}
+
+# Formats a speakers field of .voices ("0:jessica 1:pierre" or "-") for display.
+speakers_text(){
+    [ "$1" = "-" ] && return
+    echo " (speakers: $(sed -E 's/([0-9]+):([^ ]+)/\1 \2/g; s/ ([0-9]+ )/, \1/g' <<< "$1"))"
+}
+
+list_voices(){
+    voices_available || return 0
+    local default_name default_speaker name speaker
+    read -r _ default_name default_speaker < <(grep '^default ' "$speech_voices_file")
+    if [ -f "$speech_voice_file" ]; then
+        read -r name speaker < "$speech_voice_file"
+        if grep -q "^voice $name " "$speech_voices_file"; then
+            echo "Current voice: $name${speaker:+, speaker $speaker} (chosen with /notif-speech-voice)"
+        else
+            echo "Current voice: $default_name (default of the host: $name, chosen with /notif-speech-voice, isn't installed anymore)"
+        fi
+    else
+        echo "Current voice: $default_name$( [ "$default_speaker" = "-" ] || echo ", speaker $default_speaker") (default of the host)"
+    fi
+    echo "Installed voices:"
+    local _ speakers
+    while read -r _ name speakers; do
+        echo "- $name$(speakers_text "$speakers")"
+    done < <(grep '^voice ' "$speech_voices_file")
+}
+
+choose_voice(){
+    local name="${1:-}" speaker="${2:-}"
+    if [ -z "$name" ]; then
+        echo "Usage: /notif-speech-voice <voice> [<speaker>], or /notif-speech-voice default"
+        return 0
+    fi
+    voices_available || return 0
+    if [ "$name" = default ]; then
+        rm -f -- "$speech_voice_file"
+        echo "Back to the default voice of the host."
+        return 0
+    fi
+    local speakers
+    speakers="$(awk -v n="$name" '$1 == "voice" && $2 == n { $1 = $2 = ""; sub(/^ +/, ""); print; exit }' "$speech_voices_file")"
+    if [ -z "$speakers" ]; then
+        echo "The voice $name isn't installed on the host. Installed voices: $(awk '$1 == "voice" { printf "%s%s", sep, $2; sep = ", " }' "$speech_voices_file")."
+        return 0
+    fi
+    if [ -n "$speaker" ]; then
+        if [ "$speakers" = "-" ]; then
+            echo "The voice $name has a single speaker: no speaker is needed."
+            return 0
+        fi
+        local id
+        id="$(tr ' ' '\n' <<< "$speakers" | awk -F: -v s="$speaker" '$1 == s || $2 == s { print $1; exit }')"
+        if [ -z "$id" ]; then
+            echo "The voice $name has no speaker $speaker.$(speakers_text "$speakers")"
+            return 0
+        fi
+        speaker="$id"
+    fi
+    # Written under a temporary name first, so that the relay never reads a partial file
+    printf '%s %s\n' "$name" "$speaker" > "$speech_voice_file.tmp"
+    mv -f "$speech_voice_file.tmp" "$speech_voice_file"
+    echo "Voice set to $name${speaker:+, speaker $speaker}, for every agent."
+}
+
+case "$1" in
+    --speech-off) [ "$speech_set_up" = 0 ] || touch "$speech_muted_file"; status; exit 0 ;;
+    --speech-on) [ "$speech_set_up" = 0 ] || rm -f -- "$speech_muted_file"; status; exit 0 ;;
+    --speech-voices) list_voices; exit 0 ;;
+    --speech-voice) shift; choose_voice "$@"; exit 0 ;;
+    --status) status; exit 0 ;;
+    --*) echo "agent-notify: unknown option $1" >&2; exit 2 ;;
+esac
+
+text="$*"
+[ -z "${AGENT_NOTIFY_NAME:-}" ] || text="$AGENT_NOTIFY_NAME: $text"
+
+# Speech: written under a temporary name first, so that the relay never reads a partial file
+if [ "$speech_set_up" = 1 ] && [ ! -e "$speech_muted_file" ]; then
+    name="$(date +%Y%m%d-%H%M%S-%N)-${HOSTNAME:-agent}-$$"
+    printf '%s\n' "$text" > "$speech_dir/$name.tmp"
+    mv "$speech_dir/$name.tmp" "$speech_dir/$name.txt"
+fi

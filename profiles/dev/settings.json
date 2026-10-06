@@ -11,7 +11,8 @@
       "Bash(git commit:*)",
       "Bash(git status)",
       "Bash(git diff:*)",
-      "Bash(git log:*)"
+      "Bash(git log:*)",
+      "Bash(agent-notify *)"
     ],
     "ask": [
       "Bash(git push:*)",
@@ -41,6 +42,30 @@
       "mcp__devops__devops_pull_request_delete_comment",
       "mcp__devops__devops_wiki*",
       "mcp__devops__devops_repository*"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-notify \"${AGENT_NOTIFY_GREETING_TEXT-Bonjour, je suis prêt}\""
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "permission_prompt",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-notify \"${AGENT_NOTIFY_PERMISSION_TEXT:-Autorisation requise}\""
+          }
+        ]
+      }
     ]
   }
 }
