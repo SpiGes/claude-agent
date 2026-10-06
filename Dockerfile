@@ -47,6 +47,11 @@ RUN apt-get update \
         postgresql-client \
         # Required by Puppeteer (used by mermaid-cli) to extract the downloaded Chromium archive.
         unzip \
+        # Audio recorder used by the voice dictation of Claude Code (`/voice`), with its PulseAudio
+        # backend: the microphone is reached through the WSLg audio server, when launch.sh mounts it
+        # (AGENT_VOICE_INPUT=1).
+        sox \
+        libsox-fmt-pulse \
         # Font files: without any installed font, chrome-headless-shell renders shapes but no
         # diagram text (Liberation is metric-compatible with Arial/Times, used across the
         # Puppeteer/Chrome-in-Docker ecosystem for this exact purpose).
@@ -204,6 +209,8 @@ ENV NUGET_CERT_REVOCATION_MODE=offline
 ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 ENV SSL_CERT_DIR=/etc/ssl/certs
+# SoX records through PulseAudio: the container has no ALSA device, which SoX would use otherwise.
+ENV AUDIODRIVER=pulseaudio
 
 # Git safety and default authorship for commits made by the agent.
 RUN git config --system --add safe.directory /backend && \

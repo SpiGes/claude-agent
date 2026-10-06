@@ -10,6 +10,7 @@ export SHARED_BASE_DIR="${SHARED_BASE_DIR:-$HOME/.agents/shared}"
 export AGENT_USER_FILE="${AGENT_USER_FILE:-$AGENT_HOMES_DIR/CLAUDE.user.md}"
 export AGENT_NOTIFY_SPEECH="${AGENT_NOTIFY_SPEECH:-1}"
 export AGENT_NOTIFY_SPEECH_DIR="${AGENT_NOTIFY_SPEECH_DIR:-$AGENT_HOMES_DIR/notifications/speech}"
+export AGENT_VOICE_INPUT="${AGENT_VOICE_INPUT:-0}"
 
 # Name that starts each notification of an agent: the name of its workspace folder, or of the folder
 # above it when the workspace is a "branch" folder (e.g. backend/branch gives "backend"). AGENT_NOTIFY_NAME
@@ -63,6 +64,17 @@ _claude_agent(){
         fi
     fi
 
+    # Voice input (/voice, see README): opt-in, since every process of the container can then record the
+    # microphone. Only the WSLg audio socket is mounted, not the whole /mnt/wslg folder (display sockets).
+    local -a voice_args=()
+    if [ "$AGENT_VOICE_INPUT" = "1" ]; then
+        if [ -S /mnt/wslg/PulseServer ]; then
+            voice_args=(-v /mnt/wslg/PulseServer:/mnt/wslg/PulseServer -e PULSE_SERVER=unix:/mnt/wslg/PulseServer)
+        else
+            echo "Voice input disabled: /mnt/wslg/PulseServer not found (WSLg isn't active)." >&2
+        fi
+    fi
+
     docker run -it --rm --user $(id -u):$(id -g) \
       -e HOME=/root \
       -e NUGET_PACKAGES=/home/$USER/.nuget/packages \
@@ -75,6 +87,7 @@ _claude_agent(){
       "${mcp_mount[@]}" \
       "${context_mounts[@]}" \
       "${notify_args[@]}" \
+      "${voice_args[@]}" \
       -v "$PWD:/workspace" \
       -v $SHARED_BASE_DIR:/shared \
       bfs-claude-agent "$command" "${mcp_args[@]}" "$@"
