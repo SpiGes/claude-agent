@@ -124,12 +124,21 @@ under it covers the change, a task is proposed before the first commit (title, s
 description, parent, assigned to the user) and created after the user's agreement. The pull
 request is then linked to the parent work item and to the task(s).
 
+GitHub has no tasks: on GitHub, the commits use the number of the issue instead, and no task is
+proposed. The pull request is linked to the issue (e.g. `Closes #4` in its description).
+
 If the task number is not known from the conversation or the workspace, ask for it rather
 than guessing or omitting it.
 
 Keep commits atomic wherever possible: do not mix unrelated changes in a single commit.
 If a set of changes covers more than one unrelated concern, split it into separate commits
 rather than combining them.
+
+Structure every pull request title as: `[#<id>] - <description>`, on GitHub as on Azure DevOps.
+`<id>` is the number of the GitHub issue, or of the Azure DevOps bug, user story, or issue the
+pull request belongs to, never of a task; `<description>` is a short text that sums up the work.
+Example: `[#4] - Adds voice input with /voice, through the WSLg audio server`.
+A squash merge keeps the title as the message of the merge commit.
 
 ## Spoken notifications
 
