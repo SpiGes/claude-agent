@@ -213,11 +213,11 @@ From a session of the dev profile, `/notif-speech-off` mutes the speech notifica
 
 ## Voice input
 
-The person can dictate prompts with the voice dictation of Claude Code (`/voice`) instead of typing them. It's enabled by default, as soon as WSLg is active on the host.
+The person can dictate prompts with the voice dictation of Claude Code (`/voice`) instead of typing them. It's disabled by default, since it gives the container access to the microphone (see "Security" below), and enabled with `claude_voice_on` (`claude_voice_off` disables it again); WSLg must be active on the host. The choice is kept in `$AGENT_HOMES_DIR/voice-input`, for every terminal, and applies to the next launches of an agent: an agent already running keeps its microphone until it ends.
 
 ### How it works
 
-- With `AGENT_VOICE_INPUT=1` (default), `launch.sh` mounts the WSLg audio socket (`/mnt/wslg/PulseServer`) into the container and sets `PULSE_SERVER`. Only the audio socket is mounted, not the whole `/mnt/wslg` folder, which also holds the display sockets. When the socket isn't found, `launch.sh` prints a warning and starts the agent without voice input.
+- With `AGENT_VOICE_INPUT=1`, `launch.sh` mounts the WSLg audio socket (`/mnt/wslg/PulseServer`) into the container and sets `PULSE_SERVER`. Only the audio socket is mounted, not the whole `/mnt/wslg` folder, which also holds the display sockets. When the socket isn't found, `launch.sh` prints a warning and starts the agent without voice input.
 - The image records through SoX and its PulseAudio backend (`AUDIODRIVER=pulseaudio`), since the container has no ALSA device.
 - `launch.sh` enables the dictation with `claude --settings`: `/voice` and `/config` can't keep a setting, since the `settings.json` of the profile is mounted read-only. The mode and the language are therefore set with the variables below, not in a session.
 - The audio is streamed to Anthropic for the transcription, as the prompts are; it isn't processed locally. The transcription doesn't count toward the usage limits.
@@ -232,13 +232,13 @@ Exported in `~/.bashrc`, before `launch.sh` is sourced:
 
 | Variable | Default | Effect |
 |---|---|---|
-| `AGENT_VOICE_INPUT` | `1` | `0` disables the voice input: no audio socket is mounted |
+| `AGENT_VOICE_INPUT` | The choice of `claude_voice_on` / `claude_voice_off`, else `0` | `1` enables the voice input: the audio socket is mounted. With `0`, no audio socket is mounted. An exported value takes precedence over `claude_voice_on` / `claude_voice_off` |
 | `AGENT_VOICE_MODE` | `tap` | `tap` or `hold` |
 | `AGENT_VOICE_LANGUAGE` | `french` | Dictation language (name or code, e.g. `german`, `de`). It also sets the response language of Claude Code |
 
 ### Security
 
-With the voice input enabled, every process of the container can record the microphone for the whole session, not only the dictation of Claude Code. The dev profile `CLAUDE.md` forbids the agent to record it with its own commands, and `settings.json` denies the usual recording commands (`rec`, `sox`, `arecord`, `parec`, `parecord`); a script could still bypass these rules, so `AGENT_VOICE_INPUT=0` remains the only real barrier.
+With the voice input enabled, every process of the container can record the microphone for the whole session, not only the dictation of Claude Code, e.g. during a Teams meeting: muting the microphone in Teams doesn't mute it for the other applications. The dev profile `CLAUDE.md` forbids the agent to record it with its own commands, and `settings.json` denies the usual recording commands (`rec`, `sox`, `arecord`, `parec`, `parecord`); a script could still bypass these rules, so an unmounted audio socket (`AGENT_VOICE_INPUT=0`, the default) is the only real barrier. With the voice input enabled, the agent is better closed, or the microphone muted at the system or headset level, during a sensitive meeting.
 
 ### Troubleshooting
 
@@ -253,6 +253,7 @@ With the voice input enabled, every process of the container can record the micr
 | `claude_dev_bash` | Opens a shell in the same environment, without starting Claude Code; useful for testing dotnet build, git status, and similar commands by hand |
 | `claude_qualitycheck` | Starts the agent in review-only mode (qualitycheck profile, read-only, no MCP server) |
 | `claude_notify_speech_stop` | Stops the speech relay of the speech notifications (see "Optional: speech notifications"); the next launch of an agent starts it again |
+| `claude_voice_on` / `claude_voice_off` | Enables or disables the voice input (microphone) for the next launches of an agent (see "Voice input") |
 
 Each command starts a new container, removed on exit (--rm); nothing needs to be stopped or cleaned up by hand.
 

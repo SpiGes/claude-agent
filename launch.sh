@@ -10,7 +10,8 @@ export SHARED_BASE_DIR="${SHARED_BASE_DIR:-$HOME/.agents/shared}"
 export AGENT_USER_FILE="${AGENT_USER_FILE:-$AGENT_HOMES_DIR/CLAUDE.user.md}"
 export AGENT_NOTIFY_SPEECH="${AGENT_NOTIFY_SPEECH:-1}"
 export AGENT_NOTIFY_SPEECH_DIR="${AGENT_NOTIFY_SPEECH_DIR:-$AGENT_HOMES_DIR/notifications/speech}"
-export AGENT_VOICE_INPUT="${AGENT_VOICE_INPUT:-1}"
+# Voice input: the choice made with claude_voice_on / claude_voice_off (file in AGENT_HOMES_DIR), else 0.
+export AGENT_VOICE_INPUT="${AGENT_VOICE_INPUT:-$(grep -m1 -sx '[01]' "$AGENT_HOMES_DIR/voice-input" || echo 0)}"
 export AGENT_VOICE_MODE="${AGENT_VOICE_MODE:-tap}"
 export AGENT_VOICE_LANGUAGE="${AGENT_VOICE_LANGUAGE:-french}"
 
@@ -66,9 +67,9 @@ _claude_agent(){
         fi
     fi
 
-    # Voice input (/voice, see README): enabled by default when WSLg is there; every process of the container
-    # can then record the microphone, so AGENT_VOICE_INPUT=0 disables it. Only the WSLg audio socket is
-    # mounted, not the whole /mnt/wslg folder (display sockets).
+    # Voice input (/voice, see README): opt-in (AGENT_VOICE_INPUT=1), since every process of the container
+    # can then record the microphone. Only the WSLg audio socket is mounted, not the whole /mnt/wslg folder
+    # (display sockets).
     # Dictation is enabled through --settings, since /voice can't write to the settings.json of the
     # profile (read-only mount). AGENT_VOICE_LANGUAGE also sets the response language of Claude Code.
     local -a voice_args=() voice_settings=()
@@ -83,7 +84,7 @@ _claude_agent(){
                 voice_settings=(--settings "$settings}")
             fi
         else
-            echo "Voice input disabled: /mnt/wslg/PulseServer not found (WSLg isn't active), or set AGENT_VOICE_INPUT=0." >&2
+            echo "Voice input disabled: /mnt/wslg/PulseServer not found (WSLg isn't active)." >&2
         fi
     fi
 
@@ -127,4 +128,20 @@ claude_notify_speech_stop(){
     else
         echo "No speech relay running."
     fi
+}
+
+# Enable or disable the voice input (microphone) for the next launches of an agent, in every terminal: the
+# choice is kept in $AGENT_HOMES_DIR/voice-input. An agent already running keeps its microphone until it ends.
+claude_voice_on(){
+    _claude_voice_set 1 "Voice input enabled for the next launches of an agent."
+}
+
+claude_voice_off(){
+    _claude_voice_set 0 "Voice input disabled for the next launches of an agent; an agent already running keeps it until it ends."
+}
+
+_claude_voice_set(){
+    mkdir -p "$AGENT_HOMES_DIR" && echo "$1" > "$AGENT_HOMES_DIR/voice-input" || return
+    export AGENT_VOICE_INPUT="$1"
+    echo "$2"
 }
