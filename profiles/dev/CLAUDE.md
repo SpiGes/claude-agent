@@ -85,6 +85,19 @@ To save tokens, prefer these over a full Read + manual scan/edit when they fit:
 - `python3` with `yaml` (PyYAML) — reads a rendered Helm manifest or a values file in a script, when `yq`
   alone isn't enough.
 
+## Container environment variables
+
+Skills and their scripts read the variables of the container `.env` file by name (e.g.
+`SPIGES_KEYCLOAK_*`, `SPIGES_ORACLE_*`, `SPIGES_BACKEND_SETTINGS_DIR`). A rename breaks them silently
+until they're run.
+
+- A variable is renamed, added, or removed only together with the skills and scripts that read it
+  and with `.env.example` in the claude-agent repository, in the same change. The readers are listed
+  first, e.g. `rg -n '<VARIABLE>' <repositories>/branch/.claude ~/.claude`.
+- When a skill fails on a variable that isn't set, the variable names of the environment are listed
+  (`env | grep -o '^SPIGES_[A-Z_]*'`, never the values). A mismatch is reported to the user, with the
+  readers to update; it's never worked around with a temporary variable on the command line.
+
 ## Design documents
 
 Design documents are versioned in the specs repository (SIS-SpiGes-Specs), not here — see
