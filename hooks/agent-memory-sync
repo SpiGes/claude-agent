@@ -1,0 +1,56 @@
+#!/bin/bash
+# Tells a running agent about the changes that other agents made to the memory index (MEMORY.md) of
+# the profile. Claude Code loads MEMORY.md only when a session starts, clears its context, or is
+# resumed, so a memory saved by another agent is otherwise only seen at the next session.
+#   agent-memory-sync session-start   SessionStart hook: keeps a copy of MEMORY.md for the session
+#   agent-memory-sync prompt          UserPromptSubmit hook: adds the changes since that copy to the
+#                                     context of the prompt, then refreshes the copy
+# The hook input (JSON) is read from stdin. The script never blocks a prompt: every error ends silently.
+set -u
+
+input="$(cat)"
+session_id="$(jq -r '.session_id // empty' <<<"$input" 2>/dev/null)"
+cwd="$(jq -r '.cwd // empty' <<<"$input" 2>/dev/null)"
+[[ "$session_id" =~ ^[A-Za-z0-9-]+$ ]] || exit 0
+
+# Claude Code names the project folder after the project path, every other character than a letter or a
+# digit being replaced by a dash (/workspace gives -workspace).
+project_dir="${CLAUDE_PROJECT_DIR:-${cwd:-$PWD}}"
+memory_index="${HOME}/.claude/projects/$(sed 's/[^A-Za-z0-9]/-/g' <<<"$project_dir")/memory/MEMORY.md"
+snapshot_dir="${AGENT_MEMORY_SYNC_DIR:-/tmp/agent-memory-sync}"
+snapshot="$snapshot_dir/$session_id.md"
+
+take_snapshot(){
+    mkdir -p "$snapshot_dir" || return
+    if [ -f "$memory_index" ]; then
+        cp "$memory_index" "$snapshot.tmp" && mv "$snapshot.tmp" "$snapshot"
+    else
+        : > "$snapshot"
+    fi
+}
+
+case "${1:-}" in
+    session-start)
+        take_snapshot
+        ;;
+    prompt)
+        if [ ! -f "$snapshot" ]; then
+            take_snapshot
+            exit 0
+        fi
+        [ -f "$memory_index" ] || exit 0
+        cmp -s "$snapshot" "$memory_index" && exit 0
+
+        added="$(diff --old-line-format='' --unchanged-line-format='' --new-line-format='%L' "$snapshot" "$memory_index")"
+        removed="$(diff --old-line-format='%L' --unchanged-line-format='' --new-line-format='' "$snapshot" "$memory_index")"
+        context="The memory index ($memory_index) changed since the previous prompt, by this agent or by another agent working at the same time. The index loaded at the start of the session is out of date on these lines."
+        [ -z "$added" ] || context+=$'\n\nAdded or updated lines:\n'"$added"
+        [ -z "$removed" ] || context+=$'\n\nRemoved or replaced lines:\n'"$removed"
+        context+=$'\n\nRead the memory file of a line before relying on it.'
+
+        take_snapshot
+        jq -n --arg context "$context" \
+            '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext: $context}}'
+        ;;
+esac
+exit 0

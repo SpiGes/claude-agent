@@ -195,6 +195,12 @@ RUN npm install -g json5@2.2.3
 COPY notifications/agent-notify /usr/local/bin/agent-notify
 RUN chmod +x /usr/local/bin/agent-notify
 
+# Hooks of the dev profile for several agents running at the same time (see hooks/ and README): tells a
+# running agent about the memories saved by the others, and refuses the shell commands that write into
+# the memory folder.
+COPY hooks/agent-memory-sync hooks/agent-memory-guard /usr/local/bin/
+RUN chmod +x /usr/local/bin/agent-memory-sync /usr/local/bin/agent-memory-guard
+
 # Container entrypoint script.
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
