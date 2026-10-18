@@ -73,6 +73,10 @@ _claude_agent()(
     # Slot (see README, "Several agents at the same time"): the first free one of the profile, held through
     # a lock on fd 9 until the container ends. Every process started from here inherits fd 9, so a process
     # that outlives the container (the speech relay) must be started with 9>&-.
+    if [[ ! "$AGENT_MAX_SLOTS" =~ ^[1-9][0-9]*$ ]]; then
+        echo "AGENT_MAX_SLOTS must be a positive number (currently \"$AGENT_MAX_SLOTS\")." >&2
+        return 1
+    fi
     local slots_dir="$AGENT_HOMES_DIR/$profile/slots" slot="" n
     mkdir -p "$slots_dir" || return
     for ((n = 1; n <= AGENT_MAX_SLOTS; n++)); do
