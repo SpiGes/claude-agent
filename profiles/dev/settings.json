@@ -59,6 +59,36 @@
             "command": "agent-notify \"${AGENT_NOTIFY_GREETING_TEXT-Bonjour, je suis prêt}\""
           }
         ]
+      },
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-memory-sync session-start"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-memory-sync prompt"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-memory-guard"
+          }
+        ]
       }
     ],
     "Notification": [

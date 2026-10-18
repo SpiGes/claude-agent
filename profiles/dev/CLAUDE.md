@@ -174,6 +174,21 @@ The user may dictate prompts with the voice dictation of Claude Code, through a 
 container can reach. The microphone is never recorded by the agent's own commands (`rec`, `sox`,
 `arecord`, `parec`, or any script doing the same), whatever the reason.
 
+## Several agents at the same time
+
+Several agents of this profile can run at the same time, in the same workspace, and share one memory.
+
+- Memory files are written only with the Edit and Write tools, never with a shell command (redirection,
+  `sed -i`, script): Edit and Write detect a change made by another agent since the file was read. A
+  hook refuses the usual shell commands that write into the memory folder.
+- Before a new memory is created, `MEMORY.md` is read again from disk: another agent may have saved the
+  same fact since the session started. An existing memory is updated rather than duplicated.
+- A context block added to a prompt by the `agent-memory-sync` hook lists the lines of `MEMORY.md`
+  changed since the previous prompt, by this agent or by another one. It replaces the out-of-date lines
+  of the index loaded at the start of the session.
+- `AGENT_SLOT` gives the slot of this agent (1 to `AGENT_MAX_SLOTS`). It's only used to tell the agents
+  apart, e.g. in a message to the user.
+
 ## Instruction governance
 
 - If you detect an inconsistency between instructions, files (project CLAUDE.md, rules

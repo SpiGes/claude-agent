@@ -1,0 +1,35 @@
+#!/bin/bash
+# PreToolUse hook (Bash) of the dev profile: refuses a shell command that writes into a memory folder
+# (~/.claude/projects/<project>/memory). Edit and Write refuse to overwrite a file changed since it was
+# read, so two agents writing at the same time can't lose each other's change; a shell command has no
+# such check. Deleting a memory file (rm) stays allowed.
+# The check is a heuristic on the command text: it stops the usual forms (redirection, sed -i, tee, mv, cp,
+# a script interpreter), not every possible one.
+set -u
+
+command="$(jq -r '.tool_input.command // empty' 2>/dev/null)"
+[ -n "$command" ] || exit 0
+
+memory='projects/[^/[:space:]"'"'"']+/memory'
+grep -Eq "$memory" <<<"$command" || exit 0
+
+write_patterns=(
+    # Redirection into a memory file: > file, >> file, &> file, including a heredoc (cat > file <<EOF)
+    ">[>|]?[[:space:]]*[\"']?[^[:space:]|;&]*$memory"
+    # Commands that change or create a file given as argument
+    "(^|[[:space:];|&(])(sed|perl)[[:space:]]([^|;&]*[[:space:]])?(-[A-Za-z]*i|--in-place)[^|;&]*$memory"
+    "(^|[[:space:];|&(])(tee|mv|cp|install|truncate|dd|rsync|ln)[[:space:]][^|;&]*$memory"
+    # A script interpreter given a memory path (python3 -c "open(...,'w')", node -e ...)
+    "(^|[[:space:];|&(])(python3?|node|perl|ruby)[[:space:]][^|;&]*$memory"
+)
+for pattern in "${write_patterns[@]}"; do
+    if grep -Eq -- "$pattern" <<<"$command"; then
+        jq -n '{hookSpecificOutput: {
+            hookEventName: "PreToolUse",
+            permissionDecision: "deny",
+            permissionDecisionReason: "Memory files are shared by every agent of the profile: write them with the Edit or Write tool, which detect a concurrent change, never with a shell command."
+        }}'
+        exit 0
+    fi
+done
+exit 0

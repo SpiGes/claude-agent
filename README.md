@@ -31,12 +31,12 @@ git clone <url-of-this-repository> ~/.agents/bfs-claude-agent
 ```bash
 docker build -t bfs-claude-agent ~/.agents/bfs-claude-agent
 ```
-Needed again only after a change to the Dockerfile, to `entrypoint.sh`, to `notifications/agent-notify`, or to the certificates under `certs/`.
+Needed again only after a change to the Dockerfile, to `entrypoint.sh`, to `notifications/agent-notify`, to the scripts under `hooks/`, or to the certificates under `certs/`.
 
 ### 3. Create the personal folders
 
 ```bash
-mkdir -p ~/.claude-agent-homes/dev ~/.claude-agent-homes/qualitycheck ~/.agents/shared
+mkdir -p ~/.claude-agent-homes ~/.agents/shared
 cp ~/.agents/bfs-claude-agent/.env.example ~/.claude-agent-homes/.env
 ```
 
@@ -70,7 +70,7 @@ claude_dev
 ### Installation details
 
 - **Personal state and secrets live outside this repository**, in `~/.claude-agent-homes` (`AGENT_HOMES_DIR`). Since the `.env` file is not inside the versioned folder at all, rather than a `.gitignore`-protected file within it, it is not exposed to a broad `git add -A`, or to a backup of the repository folder that does not respect ignore rules. It must never be committed or shared.
-- **The folders of Step 3 are created by hand**, before the first launch, so that Docker does not create them itself with the wrong owner.
+- **The folders of Step 3 are created by hand**, before the first launch, so that Docker does not create them itself with the wrong owner. For the same reason, the folder of a profile (its slots and its `projects` folder, see "Several agents at the same time") and the mount points inside a slot home are created by `launch.sh` before each `docker run`.
 - **Git authenticates through environment variables only** (`GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_<n>`, `GIT_CONFIG_VALUE_<n>`): each entry adds an `Authorization` header for one server only, so the container needs no `.ssh` mount, no private key, and no credential file. They reach the container through `--env-file`, like `CLAUDE_CODE_OAUTH_TOKEN`. The full setup guide (Chapter 3) documents the equivalent, one-time setup for the WSL2 host itself, needed for the person's own `git` operations outside the container.
 - **`docker --env-file` keeps every character after `=` as is**, trailing spaces and Windows line endings (`\r`) included. A value copied with either of them may break silently.
 - **The commit authorship is set per Git server**, through the same pair of variables for each one: `<PREFIX>_COMMIT_NAME` and `<PREFIX>_COMMIT_EMAIL`, with `DEVOPS` for the Azure DevOps Server and `GITHUB` for GitHub. At startup, `entrypoint.sh` writes each pair into `/tmp/gitconfig-<server>`, which the system Git configuration includes only for repositories whose remote is on that server. The container refuses to start, with an explicit message, when a pair of a server in use is missing, or when a value starts or ends with a space or a Windows line ending. Repositories on any other server keep the default `Claude Agent <claude-agent@spiges.local>` authorship.
@@ -255,7 +255,7 @@ With the voice input enabled, every process of the container can record the micr
 | `claude_notify_speech_stop` | Stops the speech relay of the speech notifications (see "Optional: speech notifications"); the next launch of an agent starts it again |
 | `claude_voice_on` / `claude_voice_off` | Enables or disables the voice input (microphone) for the next launches of an agent (see "Voice input") |
 
-Each command starts a new container, removed on exit (--rm); nothing needs to be stopped or cleaned up by hand.
+Each command starts a new container, removed on exit (--rm); nothing needs to be stopped or cleaned up by hand. Several agents can run at the same time, see "Several agents at the same time" below.
 
 ### Working across several repositories at once
 
@@ -277,6 +277,46 @@ A certificate that only one person needs, for example the self-signed certificat
 ### A personal preference, shared across every profile
 
 A habit that should apply regardless of which profile is running, for example a keyword that switches a response to technical English, is written once to `$AGENT_USER_FILE` (default `$AGENT_HOMES_DIR/CLAUDE.user.md`), a plain file outside any profile that every profile's `CLAUDE.md` imports automatically. It can be edited directly from the WSL2 host, not only from inside a session.
+
+## Several agents at the same time
+
+Up to `AGENT_MAX_SLOTS` agents of one profile (default `3`, can be exported in `~/.bashrc` before `launch.sh` is sourced) can run at the same time, usually in the same workspace (e.g. `~/workspace/spiges`), each one in its own worktree for its task. They share one memory, and none of them loses a change written by another one.
+
+### How it works
+
+- **One slot per agent**: `launch.sh` takes the first free slot of the profile, through a lock (`flock -n`) on `$AGENT_HOMES_DIR/<profile>/slots/<n>.lock`, held until the container ends, also after a Ctrl+C. When every slot is in use, the launch stops with a message.
+- **One home per slot**: `$AGENT_HOMES_DIR/<profile>/slots/<n>` is mounted as `/root`, so that Claude Code's own state (`.claude.json`, `sessions/`, `history.jsonl`, and so on) is never written by two agents at the same time. A slot home is created on the first launch of the slot, from the `.claude.json` and the plugins of slot 1, so that the onboarding isn't run again.
+- **One `projects` folder per profile**: `$AGENT_HOMES_DIR/<profile>/projects` is mounted as `/root/.claude/projects` in every slot. It holds the memory and the session transcripts, so that every agent reads and writes the same memory, and a session can be resumed from any slot. The workspace is always mounted as `/workspace`, so the memory folder is the same whatever the workspace of the host.
+- **Memory changes reach the running agents**: Claude Code loads `MEMORY.md` only when a session starts, is resumed, or is cleared. Two hooks of the dev profile (`hooks/agent-memory-sync`) keep a copy of it per session and, at each prompt, add the lines changed since the previous prompt to the context of the agent.
+- **No memory change is lost**: Edit and Write refuse to overwrite a file changed since it was read; a shell command has no such check. A hook of the dev profile (`hooks/agent-memory-guard`) refuses the usual shell commands that write into the memory folder (redirection, `sed -i`, `tee`, `mv`, `cp`, a script interpreter), and the dev profile `CLAUDE.md` asks the agent to write memory files only with Edit and Write. Deleting a memory file (`rm`) stays allowed.
+- **Agents can be told apart**: the slot is given to the container as `AGENT_SLOT`, and beyond slot 1 the notification name ends with the slot number (e.g. "spiges 2").
+- **`claude_dev_bash` also takes a slot**, since its shell can write to the home: with every slot in use, it doesn't start either.
+
+### Limits
+
+- Only the lines of `MEMORY.md` are sent to the running agents: a change in the content of a memory file that leaves its line unchanged is seen when the file is read, or at the next session.
+- The memory hook is a heuristic on the text of the command: it doesn't catch every possible write (e.g. a relative path after a `cd` into the memory folder), and it also refuses a `cp` from the memory folder to another one.
+- Two agents can still save the same fact at nearly the same time; the rule of reading `MEMORY.md` again before creating a memory makes it unlikely.
+- The rewind history (`file-history/`) belongs to the slot: a session resumed from another slot can't rewind the changes made before.
+- Services of the host, e.g. a local Postgres, are shared by every container.
+
+### Upgrading to the slots
+
+An installation from before the slots is upgraded once, in this order:
+
+1. **Every agent is closed**: `docker ps --filter ancestor=bfs-claude-agent` must list no container.
+2. **The repository is updated** (`git pull` in `~/.agents/bfs-claude-agent`) and **the image is rebuilt** (Step 2 of Installation). The hooks of the dev profile are read from the repository, but their scripts are only in the image: without the rebuild, every prompt and every shell command of the agent shows a hook error (`command not found`).
+3. **The home of each profile already used is moved to slot 1**, so that it keeps its memory, its sessions, and its Claude Code state. Until then, `launch.sh` refuses to start an agent of that profile, with a message pointing here. For the dev profile (the same with `qualitycheck` for that profile):
+   ```bash
+   cd ~/.claude-agent-homes
+   cp -a dev dev.backup                             # removed once the agents work
+   mv dev dev.slot1
+   mkdir -p dev/slots
+   mv dev.slot1 dev/slots/1
+   mv dev/slots/1/.claude/projects dev/projects
+   mkdir dev/slots/1/.claude/projects
+   ```
+4. **The launch functions are loaded again** in each open terminal (`source ~/.bashrc`, or a new terminal).
 
 ## Available profiles
 
@@ -301,11 +341,7 @@ The dev profile's `mcp.json` currently declares two MCP servers, each documented
 ### Adding a new profile
 
 1. Create `profiles/<name>/CLAUDE.md` and `profiles/<name>/settings.json`, and optionally `profiles/<name>/mcp.json` and `.claude/rules|skills|docs`.
-2. Create its home directory by hand, before its first launch, for the same ownership reason as `dev` and `qualitycheck` (Step 3 of Installation):
-   ```bash
-   mkdir -p "$AGENT_HOMES_DIR/<name>"
-   ```
-3. Add a function to `launch.sh`, next to the existing ones:
+2. Add a function to `launch.sh`, next to the existing ones:
    ```bash
    claude_<name>(){
        _claude_agent <name> claude "$@"
@@ -323,6 +359,9 @@ bfs-claude-agent/
     agent-notify             (copied into the image)
     speak-relay.sh           (run on the WSL2 host)
     install-speech-host.sh   (run once on the WSL2 host)
+  hooks/
+    agent-memory-sync        (copied into the image)
+    agent-memory-guard       (copied into the image)
   certs/
     bit-proxy-ca.pem
     nexus-ca.pem
@@ -343,7 +382,7 @@ bfs-claude-agent/
 ```
 
 Nothing personal or secret lives inside this repository:
-- `AGENT_HOMES_DIR` (default `$HOME/.claude-agent-homes`), one subfolder per profile, holds Claude Code's own state (session history, local configuration), plus a shared `CLAUDE.user.md` at its root (see "A personal preference" above).
+- `AGENT_HOMES_DIR` (default `$HOME/.claude-agent-homes`), one subfolder per profile, holds Claude Code's own state: `slots/<n>/`, the home of each slot (local configuration, session history), and `projects/`, shared by the slots (memory, session transcripts), see "Several agents at the same time". It also holds a shared `CLAUDE.user.md` at its root (see "A personal preference" above).
 - `AGENT_ENV_FILE` (default `$AGENT_HOMES_DIR/.env`) holds the real Claude Code token, the Git tokens, and, when GitHub is used, the agent account's GitHub API token and commit email; only `.env.example`, with placeholders, is committed here.
 - `SHARED_BASE_DIR` (default `~/.agents/shared`) holds ad-hoc documents shared with the agent, outside any project repository.
 
