@@ -290,6 +290,7 @@ Up to `AGENT_MAX_SLOTS` agents of one profile (default `3`, can be exported in `
 - **Memory changes reach the running agents**: Claude Code loads `MEMORY.md` only when a session starts, is resumed, or is cleared. Two hooks of the dev profile (`hooks/agent-memory-sync`) keep a copy of it per session and, at each prompt, add the lines changed since the previous prompt to the context of the agent.
 - **No memory change is lost**: Edit and Write refuse to overwrite a file changed since it was read; a shell command has no such check. A hook of the dev profile (`hooks/agent-memory-guard`) refuses the usual shell commands that write into the memory folder (redirection, `sed -i`, `tee`, `mv`, `cp`, a script interpreter), and the dev profile `CLAUDE.md` asks the agent to write memory files only with Edit and Write. Deleting a memory file (`rm`) stays allowed.
 - **Agents can be told apart**: the slot is given to the container as `AGENT_SLOT`, and beyond slot 1 the notification name ends with the slot number (e.g. "spiges 2").
+- **`claude_dev_bash` also takes a slot**, since its shell can write to the home: with every slot in use, it doesn't start either.
 
 ### Limits
 
