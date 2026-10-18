@@ -41,10 +41,13 @@ git_server_enabled(){
     return 1
 }
 
-# The Azure DevOps Server is always used; GitHub only once its Git token is configured.
+# The Azure DevOps Server is always used; GitHub and Bitbucket only once their Git token is configured.
 configure_authorship DEVOPS /tmp/gitconfig-devops
 if git_server_enabled https://github.com/; then
     configure_authorship GITHUB /tmp/gitconfig-github
+fi
+if git_server_enabled https://bitbucket.bit.admin.ch/; then
+    configure_authorship BITBUCKET /tmp/gitconfig-bitbucket
 fi
 
 # Personal CA certificates, from the folder given by EXTRA_CA_CERTS_DIR (.env), e.g. the self-signed

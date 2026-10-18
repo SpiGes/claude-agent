@@ -228,9 +228,11 @@ RUN git config --system --add safe.directory /backend && \
 # Per-server authorship, each applied only to repositories whose remote is on that server:
 # - Azure DevOps Server: the person's own agent identity (DEVOPS_COMMIT_NAME/EMAIL, .env)
 # - GitHub: the person's GitHub agent account identity (GITHUB_COMMIT_NAME/EMAIL, .env)
+# - Bitbucket Data Center: the person's own agent identity (BITBUCKET_COMMIT_NAME/EMAIL, .env)
 # The included files are generated at startup by entrypoint.sh, which also refuses to start when
 # a required variable is missing. The default authorship above only remains for other servers.
 RUN git config --system includeIf."hasconfig:remote.*.url:https://devops-server.admin.ch/**".path /tmp/gitconfig-devops && \
-    git config --system includeIf."hasconfig:remote.*.url:https://github.com/**".path /tmp/gitconfig-github
+    git config --system includeIf."hasconfig:remote.*.url:https://github.com/**".path /tmp/gitconfig-github && \
+    git config --system includeIf."hasconfig:remote.*.url:https://bitbucket.bit.admin.ch/**".path /tmp/gitconfig-bitbucket
 
 WORKDIR /workspace

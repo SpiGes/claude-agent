@@ -13,6 +13,7 @@ Before this repository can be used, the following must already be in place:
 - A Personal Access Token dedicated to Git operations against the on-premise Azure DevOps Server, scoped to Code (Read & Write) only — distinct from the read-only `DEVOPS_PAT` used by the Azure DevOps MCP server. See the full setup guide, Chapter 3, for how this token is used on both WSL2 and inside the container.
 - A Claude.ai account with a subscription, from which the Claude Code token is generated (Step 4 below); a separate API key is not needed.
 - Optional, only for repositories hosted on GitHub: a dedicated GitHub account for the agent, distinct from the person's own account (see "Optional: GitHub access" below).
+- Optional, only for repositories hosted on the Bitbucket Data Center server: a Bitbucket HTTP access token (see "Optional: Bitbucket access" below).
 
 If any of these points is not yet in place, the full setup guide ("Containerized Agent, Native WSL2 Development") should be consulted before continuing here.
 
@@ -51,7 +52,7 @@ Then, in `~/.claude-agent-homes/.env`, replace the placeholders of:
 - `GIT_CONFIG_VALUE_0`, with the Azure DevOps Git token from the Prerequisites, base64-encoded as shown in the file;
 - `DEVOPS_COMMIT_NAME` and `DEVOPS_COMMIT_EMAIL`, with the authorship of the agent's commits on the Azure DevOps Server, chosen by each person (e.g. `Claude Agent (Firstname Lastname)` and `firstname.lastname+agent-dev@example.org`).
 
-The GitHub lines stay commented out unless "Optional: GitHub access" below is set up.
+The GitHub and Bitbucket lines stay commented out unless "Optional: GitHub access" or "Optional: Bitbucket access" below is set up.
 
 ### 5. Load the launch functions
 
@@ -73,7 +74,7 @@ claude_dev
 - **The folders of Step 3 are created by hand**, before the first launch, so that Docker does not create them itself with the wrong owner. For the same reason, the folder of a profile (its slots and its `projects` folder, see "Several agents at the same time") and the mount points inside a slot home are created by `launch.sh` before each `docker run`.
 - **Git authenticates through environment variables only** (`GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_<n>`, `GIT_CONFIG_VALUE_<n>`): each entry adds an `Authorization` header for one server only, so the container needs no `.ssh` mount, no private key, and no credential file. They reach the container through `--env-file`, like `CLAUDE_CODE_OAUTH_TOKEN`. The full setup guide (Chapter 3) documents the equivalent, one-time setup for the WSL2 host itself, needed for the person's own `git` operations outside the container.
 - **`docker --env-file` keeps every character after `=` as is**, trailing spaces and Windows line endings (`\r`) included. A value copied with either of them may break silently.
-- **The commit authorship is set per Git server**, through the same pair of variables for each one: `<PREFIX>_COMMIT_NAME` and `<PREFIX>_COMMIT_EMAIL`, with `DEVOPS` for the Azure DevOps Server and `GITHUB` for GitHub. At startup, `entrypoint.sh` writes each pair into `/tmp/gitconfig-<server>`, which the system Git configuration includes only for repositories whose remote is on that server. The container refuses to start, with an explicit message, when a pair of a server in use is missing, or when a value starts or ends with a space or a Windows line ending. Repositories on any other server keep the default `Claude Agent <claude-agent@spiges.local>` authorship.
+- **The commit authorship is set per Git server**, through the same pair of variables for each one: `<PREFIX>_COMMIT_NAME` and `<PREFIX>_COMMIT_EMAIL`, with `DEVOPS` for the Azure DevOps Server, `GITHUB` for GitHub, and `BITBUCKET` for the Bitbucket Data Center server. At startup, `entrypoint.sh` writes each pair into `/tmp/gitconfig-<server>`, which the system Git configuration includes only for repositories whose remote is on that server. The container refuses to start, with an explicit message, when a pair of a server in use is missing, or when a value starts or ends with a space or a Windows line ending. Repositories on any other server keep the default `Claude Agent <claude-agent@spiges.local>` authorship.
 - **`claude setup-token` (Step 4) is run with `--entrypoint claude`**, which bypasses `entrypoint.sh`: the token is generated before the `.env` file is filled in, so the authorship checks would otherwise refuse to start.
 - **`launch.sh` is sourced, not copied**, so a plain `git pull` on this repository updates the launch functions at the next shell start. It defines `claude_dev`, `claude_dev_bash`, and `claude_qualitycheck` (see Usage), on top of `_claude_agent`, which runs the container for a given profile.
 - **Every path is overridable**: `AGENT_HOMES_DIR`, `AGENT_ENV_FILE` (default `$AGENT_HOMES_DIR/.env`), `SHARED_BASE_DIR` (default `~/.agents/shared`), and `AGENT_USER_FILE` (default `$AGENT_HOMES_DIR/CLAUDE.user.md`) can be exported in `~/.bashrc` before `launch.sh` is sourced. `AGENT_BASE_DIR` defaults to the folder `launch.sh` itself lives in, so this repository can be cloned anywhere.
@@ -132,6 +133,55 @@ Once the container is started, from `claude_dev_bash`:
 gh auth status                                  # agent account, via GH_TOKEN
 git -C <github-repo> push --dry-run origin HEAD # authenticates with the Git token
 git -C <github-repo> config user.email          # the noreply address
+```
+
+## Optional: Bitbucket access
+
+Only needed when the agent works on repositories hosted on the Bitbucket Data Center server (`bitbucket.bit.admin.ch`). There is no agent account on Bitbucket: the token is created by the person, and the agent acts with the permissions of that token. There is no API token either, only Git operations are covered.
+
+### Token
+
+A Bitbucket HTTP access token, created at the narrowest level the person's rights allow:
+- Repository: Repository settings, HTTP access tokens (repository admin rights needed)
+- Project: Project settings, HTTP access tokens (project admin rights needed)
+- Personal: Manage account, HTTP access tokens (covers every repository the person can reach)
+
+Its permission is Repository read, or Repository write when the agent pushes, and it gets an expiration date. Bitbucket shows the token only once, right after its creation.
+
+### Remotes
+
+The repositories are cloned over HTTPS (`https://bitbucket.bit.admin.ch/scm/<project>/<repository>.git`), not SSH: the container has no SSH key, and the token is only sent to HTTPS URLs. The URL never holds a user name or a token: they would be stored in clear in `.git/config`.
+
+### `.env` file
+
+The four Bitbucket lines of `.env.example` are uncommented, and `GIT_CONFIG_COUNT` is raised by one. With GitHub also enabled:
+```
+GIT_CONFIG_COUNT=3
+GIT_CONFIG_KEY_2=http.https://bitbucket.bit.admin.ch/.extraHeader
+GIT_CONFIG_VALUE_2=Authorization: Bearer <Bitbucket token, plain, no base64>
+BITBUCKET_COMMIT_NAME=<agent name, e.g. Claude Agent (Firstname Lastname)>
+BITBUCKET_COMMIT_EMAIL=<agent email address>
+```
+- The indexes of `GIT_CONFIG_KEY_<n>` must follow each other from 0: without GitHub, the Bitbucket entry takes index 1 and `GIT_CONFIG_COUNT` is 2.
+- `GIT_CONFIG_VALUE_2` applies only to `https://bitbucket.bit.admin.ch/` URLs, so the Bitbucket token never reaches another server.
+- Bitbucket accepts the token as a Bearer token, so no base64 encoding and no user name are needed, unlike the Basic headers of Azure DevOps and GitHub.
+- `BITBUCKET_COMMIT_NAME` and `BITBUCKET_COMMIT_EMAIL` are the authorship of the agent's commits on Bitbucket, handled like the Azure DevOps pair (see "Installation details"), and required once the Bitbucket Git token is enabled.
+
+The token can be appended with `read -rs` and `printf`, as for GitHub:
+```bash
+read -rs -p 'Bitbucket token: ' bb_token; echo
+printf '%s\n' 'GIT_CONFIG_KEY_2=http.https://bitbucket.bit.admin.ch/.extraHeader' \
+  "GIT_CONFIG_VALUE_2=Authorization: Bearer $bb_token" >> ~/.claude-agent-homes/.env
+unset bb_token
+```
+
+### Check
+
+Once the container is started, from `claude_dev_bash`:
+```bash
+git -C <bitbucket-repo> ls-remote --heads origin        # authenticates with the token
+git -C <bitbucket-repo> push --dry-run origin HEAD      # only with Repository write
+git -C <bitbucket-repo> config user.email               # BITBUCKET_COMMIT_EMAIL
 ```
 
 ## Optional: speech notifications
@@ -383,7 +433,7 @@ bfs-claude-agent/
 
 Nothing personal or secret lives inside this repository:
 - `AGENT_HOMES_DIR` (default `$HOME/.claude-agent-homes`), one subfolder per profile, holds Claude Code's own state: `slots/<n>/`, the home of each slot (local configuration, session history), and `projects/`, shared by the slots (memory, session transcripts), see "Several agents at the same time". It also holds a shared `CLAUDE.user.md` at its root (see "A personal preference" above).
-- `AGENT_ENV_FILE` (default `$AGENT_HOMES_DIR/.env`) holds the real Claude Code token, the Git tokens, and, when GitHub is used, the agent account's GitHub API token and commit email; only `.env.example`, with placeholders, is committed here.
+- `AGENT_ENV_FILE` (default `$AGENT_HOMES_DIR/.env`) holds the real Claude Code token, the Git tokens, the commit authorship of each server, and, when GitHub is used, the agent account's GitHub API token; only `.env.example`, with placeholders, is committed here.
 - `SHARED_BASE_DIR` (default `~/.agents/shared`) holds ad-hoc documents shared with the agent, outside any project repository.
 
 ## Troubleshooting
