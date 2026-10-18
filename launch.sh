@@ -41,9 +41,11 @@ _claude_agent_slot_home(){
 
     if [ ! -d "$home" ]; then
         mkdir -p "$home/.claude" || return
-        [ ! -f "$reference/.claude.json" ] || cp "$reference/.claude.json" "$home/.claude.json"
-        [ ! -d "$reference/.claude/plugins" ] || cp -a "$reference/.claude/plugins" "$home/.claude/"
-        echo "New home for slot $slot of the $profile profile, created from slot 1." >&2
+        if [ "$slot" != 1 ]; then
+            [ ! -f "$reference/.claude.json" ] || cp "$reference/.claude.json" "$home/.claude.json"
+            [ ! -d "$reference/.claude/plugins" ] || cp -a "$reference/.claude/plugins" "$home/.claude/"
+            echo "New home for slot $slot of the $profile profile, created from slot 1." >&2
+        fi
     fi
 
     mkdir -p "$AGENT_HOMES_DIR/$profile/projects" \
@@ -59,6 +61,14 @@ _claude_agent()(
     local profile="$1"
     local command="$2"
     shift 2
+
+    # A home from before the slots ($AGENT_HOMES_DIR/<profile> mounted as /root) is moved by the person (see
+    # README, "Upgrading to the slots"), never replaced by an empty slot: Claude Code would run the onboarding
+    # again, and the memory and the sessions would look lost.
+    if [ -e "$AGENT_HOMES_DIR/$profile/.claude" ] || [ -e "$AGENT_HOMES_DIR/$profile/.claude.json" ]; then
+        echo "The home of the $profile profile ($AGENT_HOMES_DIR/$profile) is from before the slots: move it first (see README, \"Upgrading to the slots\")." >&2
+        return 1
+    fi
 
     # Slot (see README, "Several agents at the same time"): the first free one of the profile, held through
     # a lock on fd 9 until the container ends. Every process started from here inherits fd 9, so a process

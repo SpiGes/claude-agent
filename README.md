@@ -299,19 +299,23 @@ Up to `AGENT_MAX_SLOTS` agents of one profile (default `3`, can be exported in `
 - The rewind history (`file-history/`) belongs to the slot: a session resumed from another slot can't rewind the changes made before.
 - Services of the host, e.g. a local Postgres, are shared by every container.
 
-### Moving an existing home to slots
+### Upgrading to the slots
 
-A home created before the slots (`$AGENT_HOMES_DIR/<profile>` mounted as `/root`) is moved once, with no agent running:
-```bash
-docker ps --filter ancestor=bfs-claude-agent    # must list no container
-cd ~/.claude-agent-homes
-cp -a dev dev.backup                             # removed once the agents work
-mv dev dev.slot1
-mkdir -p dev/slots
-mv dev.slot1 dev/slots/1
-mv dev/slots/1/.claude/projects dev/projects
-mkdir dev/slots/1/.claude/projects
-```
+An installation from before the slots is upgraded once, in this order:
+
+1. **Every agent is closed**: `docker ps --filter ancestor=bfs-claude-agent` must list no container.
+2. **The repository is updated** (`git pull` in `~/.agents/bfs-claude-agent`) and **the image is rebuilt** (Step 2 of Installation). The hooks of the dev profile are read from the repository, but their scripts are only in the image: without the rebuild, every prompt and every shell command of the agent shows a hook error (`command not found`).
+3. **The home of each profile already used is moved to slot 1**, so that it keeps its memory, its sessions, and its Claude Code state. Until then, `launch.sh` refuses to start an agent of that profile, with a message pointing here. For the dev profile (the same with `qualitycheck` for that profile):
+   ```bash
+   cd ~/.claude-agent-homes
+   cp -a dev dev.backup                             # removed once the agents work
+   mv dev dev.slot1
+   mkdir -p dev/slots
+   mv dev.slot1 dev/slots/1
+   mv dev/slots/1/.claude/projects dev/projects
+   mkdir dev/slots/1/.claude/projects
+   ```
+4. **The launch functions are loaded again** in each open terminal (`source ~/.bashrc`, or a new terminal).
 
 ## Available profiles
 
