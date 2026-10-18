@@ -39,16 +39,24 @@ case "${1:-}" in
             exit 0
         fi
         [ -f "$memory_index" ] || exit 0
-        cmp -s "$snapshot" "$memory_index" && exit 0
 
-        added="$(diff --old-line-format='' --unchanged-line-format='' --new-line-format='%L' "$snapshot" "$memory_index")"
-        removed="$(diff --old-line-format='%L' --unchanged-line-format='' --new-line-format='' "$snapshot" "$memory_index")"
+        # The index is read once: a change written by another agent during the comparison would otherwise be
+        # in the new copy without having been reported.
+        current="$snapshot.current"
+        cp "$memory_index" "$current" || exit 0
+        if cmp -s "$snapshot" "$current"; then
+            mv "$current" "$snapshot"
+            exit 0
+        fi
+
+        added="$(diff --old-line-format='' --unchanged-line-format='' --new-line-format='%L' "$snapshot" "$current")"
+        removed="$(diff --old-line-format='%L' --unchanged-line-format='' --new-line-format='' "$snapshot" "$current")"
         context="The memory index ($memory_index) changed since the previous prompt, by this agent or by another agent working at the same time. The index loaded at the start of the session is out of date on these lines."
         [ -z "$added" ] || context+=$'\n\nAdded or updated lines:\n'"$added"
         [ -z "$removed" ] || context+=$'\n\nRemoved or replaced lines:\n'"$removed"
         context+=$'\n\nRead the memory file of a line before relying on it.'
 
-        take_snapshot
+        mv "$current" "$snapshot"
         jq -n --arg context "$context" \
             '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext: $context}}'
         ;;
