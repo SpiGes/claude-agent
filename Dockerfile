@@ -184,6 +184,9 @@ RUN npm install -g @anthropic-ai/claude-code
 RUN chmod -R 777 $(npm root -g)/@anthropic-ai $(npm config get prefix)/bin
 # Structural code search across C#/TypeScript, matches syntax rather than plain text.
 RUN npm install -g @ast-grep/cli@0.45.3
+# Browser cache of Puppeteer, outside /root: /root is replaced at run time by the mounted slot home,
+# which would hide the chrome-headless-shell downloaded below. Also read at run time to find it.
+ENV PUPPETEER_CACHE_DIR=/opt/puppeteer
 # Renders Mermaid diagram code to PNG/SVG/PDF (`mmdc`).
 RUN npm install -g @mermaid-js/mermaid-cli@11.17.0
 # JSON5 parser (`json5 <file>` prints plain JSON), used to read JSON files with comments and a BOM
