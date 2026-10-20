@@ -5,7 +5,7 @@ user's validation.
 
 ## Steps
 
-1. A breakdown draft is written to `/shared/<topic>-task-breakdown.md`:
+1. A breakdown draft is written to `/shared/<work item id>-<topic>/task-breakdown.md`:
    - the user story that receives the work, with the reasons when several are possible. Common
      development needed by several user stories may be included in one existing user story
    - the new user stories needed, if any, with title and description

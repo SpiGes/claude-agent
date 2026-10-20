@@ -49,7 +49,7 @@ user story).
 - **Validation.** A phase is closed only by the user. A proposal isn't applied on the assumption
   that it will be accepted.
 - **Drafts in /shared.** Only temporary documents that aren't versioned are written to
-  `/shared/<topic>.md`, in the user's language: questions to be passed on to the business, and the
+  `/shared/<work item id>-<topic>/`, in the user's language: questions to be passed on to the business, and the
   breakdown draft before the work items are created. The functional specification and the design
   document are edited directly in the specs repository. The terminal only gets a short recap.
 - **Inconsistencies.** Before an inconsistency is flagged in a work item, the related work items

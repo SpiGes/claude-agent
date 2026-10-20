@@ -153,6 +153,17 @@ pull request belongs to, never of a task; `<description>` is a short text that s
 Example: `[#4] - Adds voice input with /voice, through the WSLg audio server`.
 A squash merge keeps the title as the message of the merge commit.
 
+## Files shared with the user
+
+Files that the user reads, copies, or edits are written to `/shared` (mounted from the host), never left
+in the scratchpad, which the host can't reach. The scratchpad is only used for temporary files.
+
+- The files of a work item go to `/shared/<work item id>-<topic>/` (e.g.
+  `/shared/158985-sis-trigger-endpoint/`), so that they're found and removed at the end of the work
+  (`work-item-cleanup` skill) without a text search
+- The other files go to `/shared/<topic>/`, or follow the convention of the skill that writes them
+  (e.g. `pr-review`)
+
 ## Spoken notifications
 
 When the work asked for in a request is finished, or when it's blocked on a decision of the user, a
