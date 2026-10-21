@@ -370,7 +370,7 @@ An installation from before the slots is upgraded once, in this order:
 
 ## Available profiles
 
-- dev (`profiles/dev/`): full read and write access; `git commit`/`git push` ask for confirmation each time. Declares an `mcp.json`, so the Confluence and Azure DevOps MCP servers are available in this profile (see the two MCP appendices in the specs repository). Meant for everyday development work.
+- dev (`profiles/dev/`): full read and write access; `git push`, `git rebase`, and `git reset --keep` ask for confirmation each time, and force pushes and `git reset --hard` are denied. Declares an `mcp.json`, so the Confluence and Azure DevOps MCP servers are available in this profile (see the two MCP appendices in the specs repository). Meant for everyday development work.
 - qualitycheck (`profiles/qualitycheck/`): read-only; cannot technically edit a file or commit, enforced through settings.json rather than only requested. Declares no `mcp.json`. Meant for reviewing code with no risk of an accidental change.
 
 A profile is made of two required files, and optional context folders:

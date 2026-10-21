@@ -16,6 +16,8 @@
     ],
     "ask": [
       "Bash(git push:*)",
+      "Bash(git rebase:*)",
+      "Bash(git reset --keep:*)",
       "mcp__confluence__confluence_create*",
       "mcp__confluence__confluence_copy*",
       "mcp__confluence__confluence_update*",
@@ -32,6 +34,10 @@
     ],
     "deny": [
       "Read(./.env)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git push --force-with-lease:*)",
+      "Bash(git reset --hard:*)",
       "Read(**/appsettings.custom*.json)",
       "mcp__confluence__confluence_delete_page",
       "mcp__confluence__confluence_move_page",
