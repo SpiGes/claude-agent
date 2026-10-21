@@ -140,6 +140,12 @@ request is then linked to the parent work item and to the task(s).
 GitHub has no tasks: on GitHub, the commits use the number of the issue instead, and no task is
 proposed. The pull request is linked to the issue (e.g. `Closes #4` in its description).
 
+Jira has no tasks either for the repositories hosted on Bitbucket (e.g. sis-sas-toolkit): the commits use the key of
+the Jira issue instead (e.g. `[#SIS2-472] - ...`), and no task is proposed. The pull request is created on Bitbucket,
+and its description names the Jira issue. Jira is only read by the agent: a comment for the issue is drafted in a file
+under `/shared`, in Jira wiki markup, to be pasted by the user in the Text mode of the editor (CRLF line endings,
+otherwise the tables are lost).
+
 If the task number is not known from the conversation or the workspace, ask for it rather
 than guessing or omitting it.
 
@@ -147,11 +153,18 @@ Keep commits atomic wherever possible: do not mix unrelated changes in a single 
 If a set of changes covers more than one unrelated concern, split it into separate commits
 rather than combining them.
 
-Structure every pull request title as: `[#<id>] - <description>`, on GitHub as on Azure DevOps.
-`<id>` is the number of the GitHub issue, or of the Azure DevOps bug, user story, or issue the
-pull request belongs to, never of a task; `<description>` is a short text that sums up the work.
+Structure every pull request title as: `[#<id>] - <description>`, on GitHub, Azure DevOps and Bitbucket.
+`<id>` is the number of the GitHub issue, of the Azure DevOps bug, user story, or issue, or the key of the
+Jira issue the pull request belongs to, never of a task; `<description>` is a short text that sums up the work.
 Example: `[#4] - Adds voice input with /voice, through the WSLg audio server`.
 A squash merge keeps the title as the message of the merge commit.
+
+**Git hooks.** A commit is never made with `--no-verify`, so that the hooks installed by the user (e.g. pre-commit)
+always run. The `.venv` of a repository is the user's, created on the host: its scripts point to host paths and don't
+run in the container, so it's never used nor recreated by the agent. When a hook needs the tools of the project, the
+agent commits with its own virtual environment, created from the project requirements (e.g. `requirements-dev.txt`)
+under `~/.cache/agent-venvs/<repository>`, at the front of the `PATH`. When a hook can't run, the commit isn't made
+and the error is reported to the user.
 
 ## Files shared with the user
 
