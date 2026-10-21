@@ -51,8 +51,15 @@ user story).
 - **Drafts in /shared.** Only temporary documents that aren't versioned are written to
   `/shared/<work item id>-<topic>/`, in the user's language: questions to be passed on to the
   business, and the breakdown draft before the work items are created. The functional specification
-  and the design document are edited directly in the specs repository. The terminal only gets a
-  short recap.
+  and the design document are edited in the specs worktree (see "Specs in a worktree"). The terminal
+  only gets a short recap.
+- **Specs in a worktree.** The functional specification and the design document are written in a
+  worktree of the specs repository, never on the local `master`. The worktree is created next to the
+  main checkout (e.g. `/workspace/specs/RC_<work item id>`), from the up-to-date `origin/master`, on
+  the branch of the work item the specs are written for (`feature/RC_<id>_<short_description>` for a
+  user story or a feature, `issue/RC_<id>_<short_description>` for an issue). It stays as long as the
+  work item isn't finished. At the end, the `work-item-cleanup` skill rebases the branch on
+  `origin/master`, merges it into `master` with a fast-forward, pushes it, and removes the worktree.
 - **Inconsistencies.** Before an inconsistency is flagged in a work item, the related work items
   (sibling tasks, linked user stories) are read, since the point is often covered elsewhere.
 - **Feedback loop.** When a later phase shows that an earlier result is wrong or incomplete (e.g. a
