@@ -23,8 +23,9 @@ can review.
 3. Unit tests are written following `testing.md`. Integration tests are added when the project has
    a test for the same flow (e.g. real test files under `Resources/`). Existing tests broken by the
    change are adapted, and the reason is given.
-4. When the task changes the gitops repository, the compatibility with every environment is checked
-   before the commit:
+4. When the task changes the gitops repository, the change is made in the gitops worktree of the
+   work item, and merged into `main` only on the user's request (see the gitops rules of
+   `/workspace/CLAUDE.md`). The compatibility with every environment is checked before the commit:
    - the `imageTag` of each `values-<env>.yaml` shows which build runs where (master release, pull
      request build, feature or epic branch)
    - a setting that refers to types or code of an epic (e.g. new enum keys in a mapping) is treated as

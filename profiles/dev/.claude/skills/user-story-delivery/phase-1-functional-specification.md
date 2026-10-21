@@ -14,8 +14,8 @@ business intent.
    - **hypotheses**: points that can be deduced with a low risk; they're stated, to be corrected if
      wrong
    - **questions**: points that need a business decision
-4. The questions are written to `/shared/<topic>-questions.md`, so that they can be passed on to the
-   business:
+4. The questions are written to `/shared/<work item id>-<topic>/questions.md`, so that they can be
+   passed on to the business:
    - numbered (Q1, Q2, ...), with the user story they belong to
    - each with the context, the options, and a recommendation when there is one
    - followed by the hypotheses

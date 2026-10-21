@@ -6,8 +6,8 @@ Goal: a design document, based on the functional specification, validated by the
 
 1. The `design-documents` skill is loaded, and its structure and conventions are followed. The
    `diagrams` skill is loaded for the diagrams.
-2. The existing design document is updated, or a new one is created, in the specs repository
-   (`design/...`).
+2. The existing design document is updated, or a new one is created, in the specs worktree of the
+   work item (`design/...`, see "Specs in a worktree" in [SKILL.md](SKILL.md)).
 3. Each decision with alternatives is written as "Choice 1 / Choice 2 / Choice and rationale", with
    what each choice brings and costs.
 4. Points not decided yet are split into deferred design points and open points, as defined in the
