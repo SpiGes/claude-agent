@@ -155,8 +155,8 @@ A squash merge keeps the title as the message of the merge commit.
 
 ## Files shared with the user
 
-Files that the user reads, copies, or edits are written to `/shared` (mounted from the host), never left
-in the scratchpad, which the host can't reach. The scratchpad is only used for temporary files.
+Files that the user reads, copies, or edits are written to `/shared` (mounted from the host), never
+left in the scratchpad, which the host can't reach. The scratchpad is only used for temporary files.
 
 - The files of a work item go to `/shared/<work item id>-<topic>/` (e.g.
   `/shared/158985-sis-trigger-endpoint/`), so that they're found and removed at the end of the work
