@@ -36,7 +36,7 @@ A later request without the dry mode runs the inventory again, since the state m
 - **Facts from the sources.** The memory note of the work item gives hints (repositories, worktrees,
   pull requests, files); the state is always checked in Azure DevOps (or GitHub) and in git.
 - **Not changed by the skill:** the state of the work item itself and of its parent (decided by the
-  team), and the gitops repository (the user pushes it).
+  team), and the gitops `main` (merged on the user's request during the work, pushed by the user).
 - **No force.** A worktree with uncommitted changes, or a branch with commits that aren't on the
   remote, is kept and reported. No `--force`, no `reset --hard`.
 
@@ -49,6 +49,17 @@ finished. At the end, the branch is merged into `master` and pushed, then the wo
 So the local `master` of `/workspace/specs/branch` must never be ahead of `origin/master`. If it is,
 the clean-up stops before any action, and the commits are reported with the work item each one
 belongs to (task number in the message). The user decides what to do.
+
+## Gitops workflow
+
+The gitops changes of a work item are prepared in a worktree of the gitops repository
+(`/workspace/gitops/RC_<id>`), on the branch of the work item. The branch is merged into the local
+`main` during the work, when the user asks for it (e.g. to test on an environment), and the user
+pushes `main` (see the gitops rules of `/workspace/CLAUDE.md`). The skill doesn't merge or push
+anything in gitops: it only removes the worktree once all its commits are on `origin/main`.
+
+A commit is on `origin/main` when `git cherry origin/main <branch>` marks it with `-` (same change,
+even when the hash differs after a rebase). A commit marked with `+` isn't deployed yet.
 
 ## Ownership
 
@@ -90,8 +101,13 @@ filtered with `grep -E` on the anchored patterns above.
      `origin/master` are listed; each one must belong to the work item, otherwise the clean-up stops
      and the commits are reported
    - a specs worktree with uncommitted changes is kept and reported
-4. **Gitops.** In `/workspace/gitops/branch`, the local commits that aren't on `origin/main` and
-   belong to the work item are listed, for the user to push.
+4. **Gitops.** In `/workspace/gitops/branch`, after `git fetch --prune origin`:
+   - the gitops worktree of the work item is looked for (see "Ownership"), and its commits are
+     checked with `git cherry origin/main <branch>` (see "Gitops workflow")
+   - the commits of the work item on the local `main` that aren't on `origin/main` are listed, for
+     the user to push
+   - commits of the work item that are neither merged nor pushed keep the gitops worktree; they're
+     reported, with the choice to merge them (on the user's request) or to drop them
 5. **/shared.** The folder `/shared/<id>-<topic>/` is listed with its files. Files outside this
    convention (older work, files named in the memory note) are listed as "kept, to check", with the
    reason they are believed to belong to the work item.
@@ -114,6 +130,8 @@ points come first:
   other items can be cleaned up if the user agrees.
 - A worktree with uncommitted changes, or a branch with unpushed commits (except the specs branch,
   which is merged in step 3).
+- A gitops worktree with commits that aren't on `origin/main`: it's kept until the user has merged
+  and pushed them, or decided to drop them.
 
 The user agrees with the whole table or with a part of it.
 
@@ -134,9 +152,9 @@ Done in this order, only for the items the user agreed with:
    the folder of the work item.
 4. **Worktrees and branches.** Each worktree is removed with `git worktree remove <path>`, without
    `--force`. Its local branch is then deleted with `git branch -D`: the pull requests are squash
-   merged, so `git branch -d` doesn't see the branch as merged; the completed pull request (or, for
-   the specs branch, the push of action 2) is the proof. A remote branch that still exists is deleted
-   only when the user asked for it.
+   merged, so `git branch -d` doesn't see the branch as merged; the completed pull request (for the
+   specs branch, the push of action 2; for the gitops branch, `git cherry` without `+`) is the proof.
+   A remote branch that still exists is deleted only when the user asked for it.
 5. **Memory.** The memory note of the work item is marked as done, with the date and what is left
    (e.g. a gitops commit to push, a consequence on another work item); its line in `MEMORY.md` is
    updated.
