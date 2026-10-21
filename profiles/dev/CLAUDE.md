@@ -159,6 +159,13 @@ Jira issue the pull request belongs to, never of a task; `<description>` is a sh
 Example: `[#4] - Adds voice input with /voice, through the WSLg audio server`.
 A squash merge keeps the title as the message of the merge commit.
 
+**Git hooks.** A commit is never made with `--no-verify`, so that the hooks installed by the user (e.g. pre-commit)
+always run. The `.venv` of a repository is the user's, created on the host: its scripts point to host paths and don't
+run in the container, so it's never used nor recreated by the agent. When a hook needs the tools of the project, the
+agent commits with its own virtual environment, created from the project requirements (e.g. `requirements-dev.txt`)
+under `~/.cache/agent-venvs/<repository>`, at the front of the `PATH`. When a hook can't run, the commit isn't made
+and the error is reported to the user.
+
 ## Files shared with the user
 
 Files that the user reads, copies, or edits are written to `/shared` (mounted from the host), never
