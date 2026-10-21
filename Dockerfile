@@ -45,6 +45,9 @@ RUN apt-get update \
         xmlstarlet \
         # PostgreSQL client (`psql`).
         postgresql-client \
+        # OpenSSH client (`ssh`, `scp`, `sftp`), e.g. to run programs on a non-production SAS server. A password
+        # is given through SSH_ASKPASS with SSH_ASKPASS_REQUIRE=force, never on a command line.
+        openssh-client \
         # Required by Puppeteer (used by mermaid-cli) to extract the downloaded Chromium archive.
         unzip \
         # Audio recorder used by the voice dictation of Claude Code (`/voice`), with its PulseAudio
