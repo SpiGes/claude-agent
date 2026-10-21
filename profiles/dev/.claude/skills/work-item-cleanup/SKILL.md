@@ -23,7 +23,8 @@ run ("à blanc"). The inventory is done as usual, then the skill shows what woul
   deletion, no memory change. Only read operations are run (`devops_*_get`, `gh pr view`,
   `git status`, `git log`, `git worktree list`, `ls`), plus `git fetch --prune`, which only updates
   the local copies of the remote branches
-- The report ends with the sentence to use to run the real clean-up (e.g. "work-item-cleanup 158497")
+- The report ends with the sentence to use to run the real clean-up (e.g. "work-item-cleanup 158497"),
+  and a short spoken notification gives the outcome (e.g. what blocks the clean-up)
 
 A later request without the dry mode runs the inventory again, since the state may have changed.
 
@@ -39,6 +40,10 @@ A later request without the dry mode runs the inventory again, since the state m
   team), and the gitops `main` (merged on the user's request during the work, pushed by the user).
 - **No force.** A worktree with uncommitted changes, or a branch with commits that aren't on the
   remote, is kept and reported. No `--force`, no `reset --hard`.
+- **Denied command.** When a command is denied (permission rule, auto mode classifier, or the user),
+  it isn't worked around with another command. The skill stops at this action, reports what was done
+  and what is left, and gives the user the exact commands to run with `!`. The inventory is checked
+  again before the next action, since a denied command may have run partly.
 
 ## Specs workflow
 
@@ -107,14 +112,21 @@ filtered with `grep -E` on the anchored patterns above.
    - the commits of the work item on the local `main` that aren't on `origin/main` are listed, for
      the user to push
    - commits of the work item that are neither merged nor pushed keep the gitops worktree; they're
-     reported, with the choice to merge them (on the user's request) or to drop them
+     reported, with the choice to merge them (on the user's request) or to drop them. Dropping them
+     loses them: it's done only with the explicit agreement of the user, given for each commit
 5. **/shared.** The folder `/shared/<id>-<topic>/` is listed with its files. Files outside this
    convention (older work, files named in the memory note) are listed as "kept, to check", with the
    reason they are believed to belong to the work item.
 6. **Worktrees and branches.** In every repository under `/workspace/*/branch`, after
    `git fetch --prune origin`, the worktrees and local branches of the work item are found (see
-   "Ownership"). For each one: uncommitted changes (`git status --porcelain`), commits that aren't
-   on the remote branch, and whether the remote branch still exists.
+   "Ownership"). For each one: uncommitted changes (`git status --porcelain`), whether the remote
+   branch still exists, and the commits that aren't pushed:
+   - remote branch still there: the commits of `git log origin/<branch>..<branch>`
+   - remote branch deleted after the merge of its pull request: the commits after the last commit
+     pushed to the pull request (`lastMergeSourceCommit` of `devops_pull_request_get`, `headRefOid`
+     of `gh pr view --json headRefOid`), i.e. `git log <last pushed commit>..<branch>`. A branch whose
+     tip is this commit has nothing unpushed
+   - no remote branch and no pull request (e.g. the specs and gitops branches): see steps 3 and 4
 7. **Open consequences.** The open points of the memory note that concern other work items (e.g. a
    commit to drop from another pull request) are noted for the report.
 
@@ -129,7 +141,7 @@ points come first:
 - A pull request that isn't completed: the items of its repository (worktree, branch) wait. The
   other items can be cleaned up if the user agrees.
 - A worktree with uncommitted changes, or a branch with unpushed commits (except the specs branch,
-  which is merged in step 3).
+  which is merged by action 1).
 - A gitops worktree with commits that aren't on `origin/main`: it's kept until the user has merged
   and pushed them, or decided to drop them.
 
@@ -137,24 +149,26 @@ The user agrees with the whole table or with a part of it.
 
 ## 3. Actions
 
-Done in this order, only for the items the user agreed with:
+Done in this order, only for the items the user agreed with. When an action fails, the next ones
+aren't done; the state is reported.
 
-1. **Tasks.** Each open task of the work item (development, validation tests, review, other) is
-   closed with `devops_work_item_update` (`System.State` = `Closed`). Tasks already closed aren't
-   changed.
-2. **Specs.** The specs branch of the work item is merged into `master` and pushed:
+1. **Specs.** The specs branch of the work item is merged into `master` and pushed:
    - `git fetch origin`, then in `/workspace/specs/branch`: `git merge --ff-only origin/master`
    - in the specs worktree: `git rebase origin/master`. On a conflict, `git rebase --abort` is run,
      and the merge stops and is reported; the conflict isn't solved by the skill
    - in `/workspace/specs/branch`: `git merge --ff-only <branch>`, then `git push origin master`
-   - the specs worktree and its branch are then removed like the others (action 4)
-3. **/shared.** The agreed files and folders are deleted, each named explicitly; no wildcard outside
+   - the specs worktree and its branch are then removed like the others (action 3)
+2. **/shared.** The agreed files and folders are deleted, each named explicitly; no wildcard outside
    the folder of the work item.
-4. **Worktrees and branches.** Each worktree is removed with `git worktree remove <path>`, without
+3. **Worktrees and branches.** Each worktree is removed with `git worktree remove <path>`, without
    `--force`. Its local branch is then deleted with `git branch -D`: the pull requests are squash
    merged, so `git branch -d` doesn't see the branch as merged; the completed pull request (for the
-   specs branch, the push of action 2; for the gitops branch, `git cherry` without `+`) is the proof.
+   specs branch, the push of action 1; for the gitops branch, `git cherry` without `+`) is the proof.
    A remote branch that still exists is deleted only when the user asked for it.
+4. **Tasks.** Each open task of the work item (development, validation tests, review, other) is
+   closed with `devops_work_item_update` (`System.State` = `Closed`). Tasks already closed aren't
+   changed. The tasks are closed last, so that they stay open when an earlier action fails (e.g. a
+   rebase conflict on the specs).
 5. **Memory.** The memory note of the work item is marked as done, with the date and what is left
    (e.g. a gitops commit to push, a consequence on another work item); its line in `MEMORY.md` is
    updated.
@@ -167,7 +181,7 @@ sent at the end.
 
 ## GitHub
 
-For an issue of a GitHub repository, there are no tasks and no specs repository: actions 1 and 2 are
+For an issue of a GitHub repository, there are no tasks and no specs repository: actions 1 and 4 are
 skipped. The pull requests are read with `gh pr list --state all --search "<n> in:title"` and
 `gh pr view <number> --json state,headRefName,body`; a pull request belongs to the issue when its
 title starts with `[#<n>] -`. The issue is closed by its pull request (`Closes #<n>`); this is only
