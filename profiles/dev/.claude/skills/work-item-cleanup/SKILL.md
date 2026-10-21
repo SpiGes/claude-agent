@@ -1,6 +1,6 @@
 ---
 name: work-item-cleanup
-description: Clean up at the end of a work item (user story, issue, bug) - check that its pull requests are merged, close its tasks, push its specs commits, delete its files in /shared, remove its worktrees and branches, and update its memory note. Use when the user says that the work on a work item is finished, or that its pull request is merged, and asks for the clean-up (e.g. "clean up after issue 158985", "the PR is merged, clean up", "la PR est close, tu peux faire le ménage", "nettoie l'US 156044"), or only wants to see what the clean-up would do (dry mode, e.g. "work-item-cleanup 158497 dry", "dry run of the clean-up of US 156044", "nettoyage à blanc de l'issue 158497"). Not for the delivery itself, which is covered by the user-story-delivery skill.
+description: Clean up at the end of a work item (user story, issue, bug) - check that its pull requests are merged, close its tasks, merge its specs worktree into master, delete its files in /shared, remove its worktrees and branches, and update its memory note. Use when the user says that the work on a work item is finished, or that its pull request is merged, and asks for the clean-up (e.g. "clean up after issue 158985", "the PR is merged, clean up", "la PR est close, tu peux faire le ménage", "nettoie l'US 156044"), or only wants to see what the clean-up would do (dry mode, e.g. "work-item-cleanup 158497 dry", "dry run of the clean-up of US 156044", "nettoyage à blanc de l'issue 158497"). Not for the delivery itself, which is covered by the user-story-delivery skill.
 ---
 
 # Work item clean-up
@@ -15,64 +15,105 @@ run ("à blanc"). The inventory is done as usual, then the skill shows what woul
 
 - The inventory table (step 2) gets a column "would run", with the exact call or command of each
   action: e.g. `devops_work_item_update 159383 System.State=Closed`,
-  `git -C /workspace/specs/branch push origin master`, `rm -r /shared/158497-ks-upload/`,
-  `git worktree remove /workspace/backend/RC_158497`, `git branch -D issue/RC_158497_...`
+  `git -C /workspace/specs/branch merge --ff-only issue/RC_158497_ks_upload_enterprise_only`,
+  `rm -r /shared/158497-ks-upload/`, `git worktree remove /workspace/backend/RC_158497`,
+  `git branch -D issue/RC_158497_ks_upload_enterprise_only`
 - The items that would be kept are listed with the reason
-- No question is asked, and no action is done: no work item update, no push, no deletion, no memory
-  change. Only read operations are run (`devops_*_get`, `git fetch`, `git status`, `git log`, `ls`)
+- No question is asked, and nothing is changed: no work item update, no rebase, merge, or push, no
+  deletion, no memory change. Only read operations are run (`devops_*_get`, `gh pr view`,
+  `git status`, `git log`, `git worktree list`, `ls`), plus `git fetch --prune`, which only updates
+  the local copies of the remote branches
 - The report ends with the sentence to use to run the real clean-up (e.g. "work-item-cleanup 158497")
 
 A later request without the dry mode runs the inventory again, since the state may have changed.
 
 ## Rules
 
-- **Only what belongs to the work item.** An item is acted on only when it clearly belongs to the
-  work item (task number in a commit message, work item id in a branch or folder name, link in Azure
-  DevOps). An item that may belong to it, but isn't proven to, is listed as "kept, to check". A text
-  match alone (e.g. a class name found in a file) isn't a proof.
+- **Only what belongs to the work item.** An item is acted on only when it belongs to the work item
+  by one of the rules of "Ownership" below. An item that may belong to it, but doesn't match these
+  rules, is listed as "kept, to check" and isn't changed. A text match (e.g. a class name found in a
+  file, a number found somewhere in a name) is never a proof.
 - **Facts from the sources.** The memory note of the work item gives hints (repositories, worktrees,
-  pull requests, files); the state is always checked in Azure DevOps and in git.
+  pull requests, files); the state is always checked in Azure DevOps (or GitHub) and in git.
 - **Not changed by the skill:** the state of the work item itself and of its parent (decided by the
   team), and the gitops repository (the user pushes it).
 - **No force.** A worktree with uncommitted changes, or a branch with commits that aren't on the
-  remote, is kept and reported.
+  remote, is kept and reported. No `--force`, no `reset --hard`.
+
+## Specs workflow
+
+The specs of a work item are written in a worktree of the specs repository, on the branch of the
+work item, never directly on the local `master`. The worktree stays as long as the work item isn't
+finished. At the end, the branch is merged into `master` and pushed, then the worktree is removed.
+
+So the local `master` of `/workspace/specs/branch` must never be ahead of `origin/master`. If it is,
+the clean-up stops before any action, and the commits are reported with the work item each one
+belongs to (task number in the message). The user decides what to do.
+
+## Ownership
+
+The ownership of a branch or worktree is decided by exact rules, never by a substring search.
+
+- **Branch of a pull request.** The source branch of each pull request of the work item
+  (`sourceRefName` of `devops_pull_request_get`, `headRefName` of `gh pr view --json headRefName`)
+  belongs to the work item. This rule comes first, since it doesn't depend on a naming convention.
+- **Branch name (Azure DevOps).** A local branch belongs to the work item when its full name matches
+  `^(feature|issue|bug)/RC_<id>_` (e.g. `issue/RC_158497_ks_upload_enterprise_only`). This covers the
+  branches without a pull request, like the specs branch.
+- **Branch name (GitHub).** A local branch belongs to the issue when its full name matches
+  `^feature/<n>-` (e.g. `feature/18-work-item-cleanup-skill` for issue 18, but not
+  `feature/180-...` or `feature/RC_156118_...`).
+- **Worktree.** A worktree belongs to the work item when its branch does. The worktrees and their
+  branches are read with `git worktree list --porcelain` (lines `worktree <path>` and
+  `branch refs/heads/<name>`), not guessed from the folder name. The first entry is the main
+  checkout (`branch`); it's never removed.
+- **Task number.** A commit belongs to the work item when its message starts with `[#<task>]`, where
+  `<task>` is one of the child tasks of the work item (`[#<n>]` for a GitHub issue).
+- **/shared.** The folder `/shared/<id>-<topic>/` belongs to the work item when its name starts with
+  `<id>-` (exact id, followed by a hyphen).
+
+The branch names are listed with `git for-each-ref --format='%(refname:short)' refs/heads` and
+filtered with `grep -E` on the anchored patterns above.
 
 ## 1. Inventory
 
 1. **Work item.** The work item is read with `devops_work_item_get`, with its child tasks and their
    states. The memory note of the work item is read, when there is one (see `MEMORY.md`).
 2. **Pull requests.** The pull requests linked to the work item or its tasks, and the ones named in
-   the memory note, are read with `devops_pull_request_get`, in every repository concerned (backend,
-   frontend, other). The state of each one is noted: completed, active, or abandoned.
-3. **Specs.** In `/workspace/specs/branch`, `origin` is fetched and the local commits that aren't on
-   `origin/master` are listed. The commits of the work item are the ones whose message holds the
-   number of one of its tasks. The other commits belong to other work items and aren't pushed. When
-   they come before the commits of the work item, a push of the work item's commits alone isn't
-   possible: this is reported, and nothing is reordered without the user's agreement.
-4. **Gitops.** In `/workspace/gitops/branch`, the local commits that aren't on `origin/main` and hold
-   a task number of the work item are listed, for the user to push.
-5. **/shared.** The folder `/shared/<work item id>-<topic>/` is listed with its files. Files outside
-   this convention (older work, files named in the memory note) are listed with the reason they are
-   believed to belong to the work item.
-6. **Worktrees and branches.** In every repository under `/workspace/*/branch`, `git worktree list`
-   and the local branches are read. A worktree or branch belongs to the work item when its name holds
-   the work item id (e.g. `RC_158985`, `issue/RC_158985_...`, `feature/RC_156044_...`). For each one:
-   uncommitted changes (`git status --porcelain`), commits not on the remote branch, and whether the
-   remote branch still exists (after `git fetch --prune`). The main checkout (`branch`) is never
-   removed.
+   the memory note, are read with `devops_pull_request_get` (`gh pr view` on GitHub), in every
+   repository concerned (backend, frontend, other). The state and the source branch of each one are
+   noted: completed (merged), active (open), or abandoned (closed).
+3. **Specs.** In `/workspace/specs/branch`, `git fetch --prune origin` is run, then:
+   - the local `master` is checked: no uncommitted change, and no commit ahead of `origin/master`
+     (see "Specs workflow"); otherwise the clean-up stops
+   - the specs worktree of the work item is looked for (see "Ownership"). Its commits that aren't on
+     `origin/master` are listed; each one must belong to the work item, otherwise the clean-up stops
+     and the commits are reported
+   - a specs worktree with uncommitted changes is kept and reported
+4. **Gitops.** In `/workspace/gitops/branch`, the local commits that aren't on `origin/main` and
+   belong to the work item are listed, for the user to push.
+5. **/shared.** The folder `/shared/<id>-<topic>/` is listed with its files. Files outside this
+   convention (older work, files named in the memory note) are listed as "kept, to check", with the
+   reason they are believed to belong to the work item.
+6. **Worktrees and branches.** In every repository under `/workspace/*/branch`, after
+   `git fetch --prune origin`, the worktrees and local branches of the work item are found (see
+   "Ownership"). For each one: uncommitted changes (`git status --porcelain`), commits that aren't
+   on the remote branch, and whether the remote branch still exists.
 7. **Open consequences.** The open points of the memory note that concern other work items (e.g. a
    commit to drop from another pull request) are noted for the report.
 
 ## 2. Inventory table
 
 The inventory is shown as one table per kind of item (pull requests, tasks, specs, gitops, /shared,
-worktrees and branches), with the columns item, state, and proposed action. Blocking points come
-first:
+worktrees and branches), with the columns item, state, and proposed action. Stops and blocking
+points come first:
 
+- Stop: local commits on the specs `master`, or commits of another work item on the specs branch of
+  the work item. No action is proposed until the user has decided.
 - A pull request that isn't completed: the items of its repository (worktree, branch) wait. The
   other items can be cleaned up if the user agrees.
-- A worktree with uncommitted changes, or a branch with unpushed commits.
-- Specs commits of other work items placed before the ones of the work item.
+- A worktree with uncommitted changes, or a branch with unpushed commits (except the specs branch,
+  which is merged in step 3).
 
 The user agrees with the whole table or with a part of it.
 
@@ -83,13 +124,19 @@ Done in this order, only for the items the user agreed with:
 1. **Tasks.** Each open task of the work item (development, validation tests, review, other) is
    closed with `devops_work_item_update` (`System.State` = `Closed`). Tasks already closed aren't
    changed.
-2. **Specs.** The commits of the work item are pushed to `origin/master` from the specs repository.
+2. **Specs.** The specs branch of the work item is merged into `master` and pushed:
+   - `git fetch origin`, then in `/workspace/specs/branch`: `git merge --ff-only origin/master`
+   - in the specs worktree: `git rebase origin/master`. On a conflict, `git rebase --abort` is run,
+     and the merge stops and is reported; the conflict isn't solved by the skill
+   - in `/workspace/specs/branch`: `git merge --ff-only <branch>`, then `git push origin master`
+   - the specs worktree and its branch are then removed like the others (action 4)
 3. **/shared.** The agreed files and folders are deleted, each named explicitly; no wildcard outside
    the folder of the work item.
 4. **Worktrees and branches.** Each worktree is removed with `git worktree remove <path>`, without
    `--force`. Its local branch is then deleted with `git branch -D`: the pull requests are squash
-   merged, so `git branch -d` doesn't see the branch as merged; the completed pull request is the
-   proof. A remote branch that still exists is deleted only when the user asked for it.
+   merged, so `git branch -d` doesn't see the branch as merged; the completed pull request (or, for
+   the specs branch, the push of action 2) is the proof. A remote branch that still exists is deleted
+   only when the user asked for it.
 5. **Memory.** The memory note of the work item is marked as done, with the date and what is left
    (e.g. a gitops commit to push, a consequence on another work item); its line in `MEMORY.md` is
    updated.
@@ -102,6 +149,8 @@ sent at the end.
 
 ## GitHub
 
-For an issue of a GitHub repository, there are no tasks and no specs repository: steps 1 and 2 of
-the actions are skipped. The issue is closed by its pull request (`Closes #<n>`); it's only checked.
-The branch of the pull request is named after the issue number (e.g. `feature/18-...`).
+For an issue of a GitHub repository, there are no tasks and no specs repository: actions 1 and 2 are
+skipped. The pull requests are read with `gh pr list --state all --search "<n> in:title"` and
+`gh pr view <number> --json state,headRefName,body`; a pull request belongs to the issue when its
+title starts with `[#<n>] -`. The issue is closed by its pull request (`Closes #<n>`); this is only
+checked, with `gh issue view <n> --json state`.
