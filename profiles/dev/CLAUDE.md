@@ -142,7 +142,10 @@ proposed. The pull request is linked to the issue (e.g. `Closes #4` in its descr
 
 Jira has no tasks either for the repositories hosted on Bitbucket (e.g. sis-sas-toolkit): the commits use the key of
 the Jira issue instead (e.g. `[#SIS2-472] - ...`), and no task is proposed. The pull request is created on Bitbucket,
-and its description names the Jira issue. Jira is only read by the agent: a comment for the issue is drafted in a file
+and its description names the Jira issue. It's created and updated through the Bitbucket REST API, with the token of
+the container: an update (`PUT .../pull-requests/{id}`) without the `reviewers` field removes every reviewer, so it
+always sends back the reviewers read just before (`GET` of the pull request, with its `version`), and the reviewers
+returned by the update are checked. Jira is only read by the agent: a comment for the issue is drafted in a file
 under `/shared`, in Jira wiki markup, to be pasted by the user in the Text mode of the editor (CRLF line endings,
 otherwise the tables are lost).
 
