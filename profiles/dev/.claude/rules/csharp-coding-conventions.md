@@ -198,6 +198,16 @@ EF entities must never be used in API DTOs.
 
 A mapping step must be introduced when data crosses from persistence-oriented models to API contracts.
 
+API request and response models must never be types of a shared library, such as `Bfs.Sis.Common.*`. A dedicated model must be defined in the abstraction project of the module, and the library type must be mapped to it.
+
+A shared library must be referenced only by the module project that uses it. The abstraction projects and `Bfs.Sis.SpiGes.ApiClient` must not reference it.
+
+The C# API client is generated with `GenerateDtoTypes = false`: its request and response types are resolved through the abstraction projects only. A library type in an API contract breaks the build of `Bfs.Sis.SpiGes.ApiClient`, and the API contract would change with each change of the library.
+
+The mapping must be explicit, as an extension method of a mapper of the module (`Api/Mappers` or `Application/Mappers` in the standard module structure, the existing mapping folder in a legacy module). AutoMapper must not be used for it.
+
+After a regeneration of the API clients, `Bfs.Sis.SpiGes.ApiClient` must be built once more on its own: the solution build compiles it before the generator rewrites `SpiGesApiClient.g.cs`, so a broken client isn't detected.
+
 #### Entity Framework mapping rules
 
 Entity Framework database mapping and schema configuration must be defined through Fluent API in dedicated IEntityTypeConfiguration<T> implementations.
@@ -1163,6 +1173,7 @@ is the visibility minimal?
 is the type in the right layer?
 is `DbContext` kept inside repositories?
 is an EF entity leaking into a controller or API DTO?
+is a type of a shared library leaking into an API request or response?
 is the chosen exception mapped correctly?
 are explicit exception and log messages declared centrally?
 is `var` used only where justified?
