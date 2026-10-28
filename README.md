@@ -75,7 +75,6 @@ claude_dev
 - **Git authenticates through environment variables only** (`GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_<n>`, `GIT_CONFIG_VALUE_<n>`): each entry adds an `Authorization` header for one server only, so the container needs no `.ssh` mount, no private key, and no credential file. They reach the container through `--env-file`, like `CLAUDE_CODE_OAUTH_TOKEN`. The full setup guide (Chapter 3) documents the equivalent, one-time setup for the WSL2 host itself, needed for the person's own `git` operations outside the container.
 - **`docker --env-file` keeps every character after `=` as is**, trailing spaces and Windows line endings (`\r`) included. A value copied with either of them may break silently.
 - **The commit authorship is set per Git server**, through the same pair of variables for each one: `<PREFIX>_COMMIT_NAME` and `<PREFIX>_COMMIT_EMAIL`, with `DEVOPS` for the Azure DevOps Server, `GITHUB` for GitHub, and `BITBUCKET` for the Bitbucket Data Center server. At startup, `entrypoint.sh` writes each pair into `/tmp/gitconfig-<server>`, which the system Git configuration includes only for repositories whose remote is on that server. The container refuses to start, with an explicit message, when a pair of a server in use is missing, or when a value starts or ends with a space or a Windows line ending. Repositories on any other server keep the default `Claude Agent <claude-agent@spiges.local>` authorship.
-- **The security analysis tools run without the secrets of the environment**: `osv-scanner`, `trivy`, `gitleaks`, `semgrep`, `pip-audit`, `bandit`, and `eslint-security` are installed in `/opt/security-tools/bin`, out of the `PATH`, and `/usr/local/bin/<tool>` is a link to `security-tools/security-tool`, which starts the real tool with `env -i` and only `HOME`, `PATH`, `LANG`, the certificate variables, `TERM`, and the proxy variables when they're set. These tools are downloaded from GitHub, PyPI, and npm, and are a known target of supply chain attacks: a compromised release can't read the tokens and passwords of the `.env` file from its environment. `HOME` is `~/.cache/security-tools`, which holds their caches (Trivy database, about 1.6 GB). The files of the slot home stay readable by the tools, so this reduces the exposure, it doesn't isolate them.
 - **`claude setup-token` (Step 4) is run with `--entrypoint claude`**, which bypasses `entrypoint.sh`: the token is generated before the `.env` file is filled in, so the authorship checks would otherwise refuse to start.
 - **`launch.sh` is sourced, not copied**, so a plain `git pull` on this repository updates the launch functions at the next shell start. It defines `claude_dev`, `claude_dev_bash`, and `claude_qualitycheck` (see Usage), on top of `_claude_agent`, which runs the container for a given profile.
 - **Every path is overridable**: `AGENT_HOMES_DIR`, `AGENT_ENV_FILE` (default `$AGENT_HOMES_DIR/.env`), `SHARED_BASE_DIR` (default `~/.agents/shared`), and `AGENT_USER_FILE` (default `$AGENT_HOMES_DIR/CLAUDE.user.md`) can be exported in `~/.bashrc` before `launch.sh` is sourced. `AGENT_BASE_DIR` defaults to the folder `launch.sh` itself lives in, so this repository can be cloned anywhere.
@@ -415,9 +414,7 @@ bfs-claude-agent/
     agent-memory-guard       (copied into the image)
   eslint-security/
     package.json, package-lock.json, eslint.config.mjs   (installed into /opt/eslint-security)
-    eslint-security          (wrapper, copied into /opt/security-tools/bin)
-  security-tools/
-    security-tool            (starts the security analysis tools without the secrets of the environment)
+    eslint-security          (wrapper, copied into the image)
   certs/
     bit-proxy-ca.pem
     nexus-ca.pem
