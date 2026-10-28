@@ -12,7 +12,14 @@
       "Bash(git status)",
       "Bash(git diff:*)",
       "Bash(git log:*)",
-      "Bash(agent-notify *)"
+      "Bash(agent-notify *)",
+      "Bash(dotnet list:*)",
+      "Bash(dotnet nuget why:*)",
+      "Bash(osv-scanner scan source:*)",
+      "Bash(trivy config:*)",
+      "Bash(trivy fs:*)",
+      "Bash(gitleaks git --redact:*)",
+      "Bash(gitleaks dir --redact:*)"
     ],
     "ask": [
       "Bash(git push:*)",
@@ -39,6 +46,9 @@
       "Bash(git push --force *)",
       "Bash(git push -f:*)",
       "Bash(git reset --hard:*)",
+      "Bash(trivy plugin:*)",
+      "Bash(trivy module:*)",
+      "Bash(osv-scanner fix:*)",
       "Read(**/appsettings.custom*.json)",
       "mcp__confluence__confluence_delete_page",
       "mcp__confluence__confluence_move_page",
