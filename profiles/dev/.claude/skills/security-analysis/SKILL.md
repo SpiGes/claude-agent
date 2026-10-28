@@ -34,6 +34,14 @@ completely. The tool versions and the date of the vulnerability data are written
 - Lock files (`packages.lock.json`, `package-lock.json`, Python requirements):
   `osv-scanner scan source -r <path> --format json --output <scratchpad>/osv.json`. npm dependencies are
   read from the lock file; `npm install`/`npm ci` isn't run for the analysis.
+- Python: `pip-audit --path <venv>/lib/python3*/site-packages -f json -o <scratchpad>/pip-audit.json` on a
+  virtual environment created from the project requirements (the agent's one under
+  `~/.cache/agent-venvs/<repository>`, or a new one in the scratchpad), so that the transitive packages,
+  often not pinned, are covered. Without an environment: `pip-audit -r <file> --disable-pip --no-deps`,
+  direct packages only. A finding on `pip` or `setuptools` of the virtual environment itself concerns the
+  tooling, not the project, and is reported apart.
+- Python runtime: the interpreter version the code runs on (e.g. Python 3.7 on the SAS servers) is
+  compared with the supported versions; an interpreter past its end of life is a finding of its own.
 - npm, second source: `npm audit --package-lock-only --json --registry=https://registry.npmjs.org/`, with
   `--omit=dev` in a second run, to separate what is shipped in the bundle from the build tooling. The public
   registry gives the GitHub advisories; the Nexus registry of the `.npmrc` answers with the Sonatype policy
@@ -60,6 +68,9 @@ completely. The tool versions and the date of the vulnerability data are written
   insecure URLs, `postMessage` to `*`, insecure random) and `eslint-plugin-no-unsanitized`. It ignores the
   ESLint configuration of the project, and doesn't parse the Angular templates: `[innerHTML]`, `[href]`,
   `[src]`, and `[style]` bindings in the `.html` files are listed with `rg` and checked by hand.
+- Python: `bandit -c pyproject.toml -r <path> -f json -o <scratchpad>/bandit.json` with the configuration
+  of the project when it has one (its exclusions are read and checked, not taken for granted), and
+  `semgrep --config p/python`.
 - A manual review against `rules/secure-coding.md`, focused on what the tools don't see:
   - authorization of every controller and action (`[Authorize]`, policies, `[AllowAnonymous]`), and the
     filtering by unit of the queries behind them
@@ -69,6 +80,8 @@ completely. The tool versions and the date of the vulnerability data are written
   - calls to other services and to SAS (certificate validation, commands built from input)
   - frontend: storage and logging of tokens, URLs built from backend data, guards that are the only
     check of an access rule
+  - Python: commands built for a local or remote shell, host key checking, secrets on command lines,
+    temporary files
 - `ast-grep` is used to list a pattern exhaustively (e.g. every controller and its attributes) rather than
   sampling a few files.
 

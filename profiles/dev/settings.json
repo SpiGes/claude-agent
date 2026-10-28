@@ -22,7 +22,10 @@
       "Bash(gitleaks dir --redact:*)",
       "Bash(npm audit --package-lock-only:*)",
       "Bash(npm explain:*)",
-      "Bash(eslint-security:*)"
+      "Bash(eslint-security:*)",
+      "Bash(pip-audit --path:*)",
+      "Bash(pip-audit -r:*)",
+      "Bash(bandit:*)"
     ],
     "ask": [
       "Bash(git push:*)",
@@ -53,6 +56,7 @@
       "Bash(trivy module:*)",
       "Bash(osv-scanner fix:*)",
       "Bash(npm audit fix:*)",
+      "Bash(pip-audit --fix:*)",
       "Read(**/appsettings.custom*.json)",
       "mcp__confluence__confluence_delete_page",
       "mcp__confluence__confluence_move_page",

@@ -105,6 +105,13 @@ To save tokens, prefer these over a full Read + manual scan/edit when they fit:
 - `eslint-security <path>` — standalone ESLint with security rules for TypeScript and Angular
   (`@microsoft/eslint-plugin-sdl`, `eslint-plugin-no-unsanitized`), independent of the ESLint of the project.
   Read-only: `--fix` and another configuration are refused. Angular templates aren't parsed.
+- `pip-audit` — known vulnerabilities of Python packages, from PyPI and OSV:
+  `pip-audit --path <venv>/lib/python3*/site-packages` audits an installed environment, transitive packages
+  included; `pip-audit -r <requirements file> --disable-pip --no-deps` audits a pinned file without installing
+  it (direct packages only). `--fix` isn't used.
+- `bandit` — Python security linter: `bandit -c pyproject.toml -r <path>` when the project configures it (the
+  version pinned by the project, from the agent's virtual environment, is preferred then), `bandit -r <path>`
+  otherwise.
 
 ## Container environment variables
 
@@ -215,7 +222,8 @@ A squash merge keeps the title as the message of the merge commit.
 always run. The `.venv` of a repository is the user's, created on the host: its scripts point to host paths and don't
 run in the container, so it's never used nor recreated by the agent. When a hook needs the tools of the project, the
 agent commits with its own virtual environment, created from the project requirements (e.g. `requirements-dev.txt`)
-under `~/.cache/agent-venvs/<repository>`, at the front of the `PATH`. When a hook can't run, the commit isn't made
+under `~/.cache/agent-venvs/<repository>`, at the front of the `PATH`. It's created with
+`python3 -m venv --upgrade-deps`, so that it doesn't keep the outdated `pip` of the system Python. When a hook can't run, the commit isn't made
 and the error is reported to the user.
 
 ## Files shared with the user

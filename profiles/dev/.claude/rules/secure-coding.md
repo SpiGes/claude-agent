@@ -1,5 +1,5 @@
 ---
-paths: ["**/*.cs", "**/*.ts", "**/*.html", "**/*.csproj", "**/Directory.Packages.props", "**/package.json", "**/values*.yaml", "**/templates/*.yaml", "**/Dockerfile"]
+paths: ["**/*.cs", "**/*.ts", "**/*.html", "**/*.csproj", "**/Directory.Packages.props", "**/package.json", "**/values*.yaml", "**/templates/*.yaml", "**/Dockerfile", "**/*.py", "**/requirements*.txt", "**/pyproject.toml"]
 ---
 
 # Secure coding
@@ -70,18 +70,37 @@ conflict between them is flagged, not resolved silently.
   expected host.
 - A changed TypeScript file is checked with `eslint-security <path>`; a new warning is fixed or justified.
 
-## 7. Dependencies
+## 7. Python
+
+- `subprocess` is called with a list of arguments, never with `shell=True`. A command run on a remote shell
+  (e.g. paramiko `exec_command`) quotes every argument with `shlex.quote`.
+- SSH connections check the host key (`paramiko.RejectPolicy` with known hosts), never `AutoAddPolicy`.
+- No `eval`, `exec`, `pickle`, `marshal`, or `yaml.load` (only `yaml.safe_load`) on data that comes from
+  outside the program.
+- Archives are extracted member by member, with a check that each path stays under the target folder;
+  `tarfile.extractall` uses `filter="data"` where the Python version supports it.
+- XML from outside the system is parsed with `defusedxml` when third-party packages are allowed. With the
+  standard library only (e.g. the SAS toolkit scripts), `xml.etree` is used on trusted files only.
+- A secret is passed through the environment, a file readable by the user only, or `SSH_ASKPASS`; never as
+  a command-line argument, which other users of the server can read.
+- Temporary files are created with `tempfile` (`mkstemp`, `TemporaryDirectory`), never with a fixed or
+  predictable name in a shared folder.
+- `bandit` is run on the changed files with the configuration of the project; an excluded check is
+  justified by a comment in that configuration.
+
+## 8. Dependencies
 
 - A new package, or a new major version, is justified in the pull request: maintained, with a
   compatible license, from the usual feeds (Nexus, npm registry).
 - Before the commit, the changed dependencies are checked for known vulnerabilities, transitive ones
   included: `dotnet list package --vulnerable --include-transitive` for .NET, `osv-scanner` for the lock
-  files, and `npm audit --package-lock-only --registry=https://registry.npmjs.org/` for npm. A High or Critical advisory on a changed package is reported to the user before the commit.
+  files, `npm audit --package-lock-only --registry=https://registry.npmjs.org/` for npm, and `pip-audit`
+  for Python (on the virtual environment, so that the transitive packages are covered). A High or Critical advisory on a changed package is reported to the user before the commit.
 - A vulnerable transitive package is fixed by upgrading the direct package that brings it when possible,
   otherwise by pinning the fixed version centrally (`Directory.Packages.props`), with a comment that
   gives the advisory.
 
-## 8. Helm and container configuration
+## 9. Helm and container configuration
 
 - A change of a chart doesn't remove resource limits, nor weaken a `securityContext` where one is set.
   Missing hardening of the existing charts (non-root user, no privilege escalation) is reported as a
