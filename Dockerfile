@@ -200,6 +200,13 @@ RUN pipx install mcp-devops-onpremise==2.1.0
 RUN pipx install yq==4.2.0
 # Pattern-based static analysis (C#, TypeScript, YAML), used by the code-review/security-review skills.
 RUN pipx install semgrep==1.177.0
+# Known vulnerabilities of the Python packages of a virtual environment (`pip-audit --path <site-packages>`),
+# transitive ones included, or of a pinned requirements file without installing it. Used by the security-analysis
+# skill.
+RUN pipx install pip-audit==2.10.1
+# Python security linter, for the Python code without a pre-commit of its own; a project that pins bandit (e.g. the
+# SAS toolkit) keeps its own version and configuration.
+RUN pipx install bandit==1.9.4
 
 # Bring in Node.js and npm from the official Node image instead of an apt-installed version.
 COPY --from=node-source /usr/local/bin/node /usr/local/bin/node
