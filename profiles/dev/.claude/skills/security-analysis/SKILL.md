@@ -34,6 +34,11 @@ completely. The tool versions and the date of the vulnerability data are written
 - Lock files (`packages.lock.json`, `package-lock.json`, Python requirements):
   `osv-scanner scan source -r <path> --format json --output <scratchpad>/osv.json`. npm dependencies are
   read from the lock file; `npm install`/`npm ci` isn't run for the analysis.
+- npm, second source: `npm audit --package-lock-only --json --registry=https://registry.npmjs.org/`, with
+  `--omit=dev` in a second run, to separate what is shipped in the bundle from the build tooling. The public
+  registry gives the GitHub advisories; the Nexus registry of the `.npmrc` answers with the Sonatype policy
+  results (architecture quality, end of life, CVSS thresholds), which are a compliance view, slower, and
+  aren't used for the analysis unless the user asks for them.
 - For each vulnerable transitive package, the direct package that brings it is found
   (`dotnet nuget why <project> <package>`, `npm explain <package>`), together with the first version of the
   direct package, or of the transitive one, that fixes the advisory.
@@ -49,7 +54,12 @@ completely. The tool versions and the date of the vulnerability data are written
 ### Code
 
 - `semgrep scan --config p/csharp --metrics=off --json -o <scratchpad>/semgrep-cs.json <path>`, and
-  `--config p/typescript` for the frontend.
+  `--config p/typescript --config p/javascript` for the frontend.
+- Frontend: `eslint-security <path> -f json -o <scratchpad>/eslint-security.json`, a standalone ESLint with
+  the rules of `@microsoft/eslint-plugin-sdl` (Angular sanitizer bypass, trusted URLs, `innerHTML`,
+  insecure URLs, `postMessage` to `*`, insecure random) and `eslint-plugin-no-unsanitized`. It ignores the
+  ESLint configuration of the project, and doesn't parse the Angular templates: `[innerHTML]`, `[href]`,
+  `[src]`, and `[style]` bindings in the `.html` files are listed with `rg` and checked by hand.
 - A manual review against `rules/secure-coding.md`, focused on what the tools don't see:
   - authorization of every controller and action (`[Authorize]`, policies, `[AllowAnonymous]`), and the
     filtering by unit of the queries behind them
@@ -57,6 +67,8 @@ completely. The tool versions and the date of the vulnerability data are written
   - parsing of uploaded files (XML settings, ZIP extraction, file names and paths)
   - logging of request content, tokens, or confidential data
   - calls to other services and to SAS (certificate validation, commands built from input)
+  - frontend: storage and logging of tokens, URLs built from backend data, guards that are the only
+    check of an access rule
 - `ast-grep` is used to list a pattern exhaustively (e.g. every controller and its attributes) rather than
   sampling a few files.
 

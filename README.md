@@ -370,7 +370,7 @@ An installation from before the slots is upgraded once, in this order:
 
 ## Available profiles
 
-- dev (`profiles/dev/`): full read and write access; `git push` (including `--force-with-lease`), `git rebase`, and `git reset --keep` ask for confirmation each time, and `git push --force`/`-f` and `git reset --hard` are denied. The read-only forms of the security analysis tools are allowed (`osv-scanner scan source`, `trivy config`/`fs`, `gitleaks` with `--redact` only), and the forms that change files or install code are denied (`osv-scanner fix`, `trivy plugin`/`module`). Declares an `mcp.json`, so the Confluence and Azure DevOps MCP servers are available in this profile (see the two MCP appendices in the specs repository). Meant for everyday development work.
+- dev (`profiles/dev/`): full read and write access; `git push` (including `--force-with-lease`), `git rebase`, and `git reset --keep` ask for confirmation each time, and `git push --force`/`-f` and `git reset --hard` are denied. The read-only forms of the security analysis tools are allowed (`osv-scanner scan source`, `trivy config`/`fs`, `gitleaks` with `--redact` only, `npm audit --package-lock-only`, `eslint-security`), and the forms that change files or install code are denied (`osv-scanner fix`, `trivy plugin`/`module`, `npm audit fix`). Declares an `mcp.json`, so the Confluence and Azure DevOps MCP servers are available in this profile (see the two MCP appendices in the specs repository). Meant for everyday development work.
 - qualitycheck (`profiles/qualitycheck/`): read-only; cannot technically edit a file or commit, enforced through settings.json rather than only requested. Declares no `mcp.json`. Meant for reviewing code with no risk of an accidental change.
 
 A profile is made of two required files, and optional context folders:
@@ -412,6 +412,9 @@ bfs-claude-agent/
   hooks/
     agent-memory-sync        (copied into the image)
     agent-memory-guard       (copied into the image)
+  eslint-security/
+    package.json, package-lock.json, eslint.config.mjs   (installed into /opt/eslint-security)
+    eslint-security          (wrapper, copied into the image)
   certs/
     bit-proxy-ca.pem
     nexus-ca.pem

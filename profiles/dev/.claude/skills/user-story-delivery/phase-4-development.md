@@ -42,7 +42,9 @@ can review.
    (`-reporttypes:TextSummary`, output in the scratchpad).
 6. Security checks of the change, before the commit:
    - when a package is added or upgraded, its known vulnerabilities are checked, transitive ones
-     included (`dotnet list package --vulnerable --include-transitive`, `osv-scanner` for a lock file)
+     included (`dotnet list package --vulnerable --include-transitive`, `osv-scanner` for a lock file,
+     `npm audit --package-lock-only --registry=https://registry.npmjs.org/` for npm)
+   - a changed TypeScript file of the frontend is checked with `eslint-security <path>`
    - `gitleaks dir --redact <path>` on each changed file: no secret is committed
    - a chart or Dockerfile change is checked with `trivy config` against `origin/main`
 7. A recap is given: what was done, deviations from the design (with a proposal), risks, what

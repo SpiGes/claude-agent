@@ -76,6 +76,8 @@ the local clone, without changing its working tree:
   (`curl -s https://api.osv.dev/v1/query -d '{"package":{"name":"<name>","ecosystem":"NuGet"},"version":"<version>"}'`,
   ecosystem `npm` for the frontend). The transitive packages brought by the change aren't covered by
   this check, which is listed in "Not checked"
+- the changed TypeScript files of a frontend pull request are checked with `eslint-security`, on files
+  extracted with `git archive` from the head into the scratchpad
 - a chart or Dockerfile change is checked with `trivy config`, on files extracted with `git archive` into
   the scratchpad, for the head and the merge base, and only the new findings are kept
 

@@ -68,6 +68,7 @@ conflict between them is flagged, not resolved silently.
   `localStorage` or logged to the console.
 - A URL opened or downloaded from data received from the backend is checked to be relative or on an
   expected host.
+- A changed TypeScript file is checked with `eslint-security <path>`; a new warning is fixed or justified.
 
 ## 7. Dependencies
 
@@ -75,7 +76,7 @@ conflict between them is flagged, not resolved silently.
   compatible license, from the usual feeds (Nexus, npm registry).
 - Before the commit, the changed dependencies are checked for known vulnerabilities, transitive ones
   included: `dotnet list package --vulnerable --include-transitive` for .NET, `osv-scanner` for the lock
-  files. A High or Critical advisory on a changed package is reported to the user before the commit.
+  files, and `npm audit --package-lock-only --registry=https://registry.npmjs.org/` for npm. A High or Critical advisory on a changed package is reported to the user before the commit.
 - A vulnerable transitive package is fixed by upgrading the direct package that brings it when possible,
   otherwise by pinning the fixed version centrally (`Directory.Packages.props`), with a comment that
   gives the advisory.

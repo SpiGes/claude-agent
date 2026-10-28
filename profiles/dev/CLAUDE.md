@@ -98,6 +98,13 @@ To save tokens, prefer these over a full Read + manual scan/edit when they fit:
   secret is never printed in the conversation:
   `gitleaks git --redact --report-path <scratchpad>/gitleaks.json <repository>` (history),
   `gitleaks dir --redact <path>` (files only).
+- `npm audit --package-lock-only --registry=https://registry.npmjs.org/` — known vulnerabilities of the npm
+  dependencies from `package-lock.json`, without installing them; `--omit=dev` leaves out the build tooling.
+  The public registry is given explicitly: the Nexus registry of the `.npmrc` answers with Sonatype policy
+  results instead (architecture quality, end of life), slower and not limited to vulnerabilities.
+- `eslint-security <path>` — standalone ESLint with security rules for TypeScript and Angular
+  (`@microsoft/eslint-plugin-sdl`, `eslint-plugin-no-unsanitized`), independent of the ESLint of the project.
+  Read-only: `--fix` and another configuration are refused. Angular templates aren't parsed.
 
 ## Container environment variables
 

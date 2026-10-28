@@ -19,7 +19,10 @@
       "Bash(trivy config:*)",
       "Bash(trivy fs:*)",
       "Bash(gitleaks git --redact:*)",
-      "Bash(gitleaks dir --redact:*)"
+      "Bash(gitleaks dir --redact:*)",
+      "Bash(npm audit --package-lock-only:*)",
+      "Bash(npm explain:*)",
+      "Bash(eslint-security:*)"
     ],
     "ask": [
       "Bash(git push:*)",
@@ -49,6 +52,7 @@
       "Bash(trivy plugin:*)",
       "Bash(trivy module:*)",
       "Bash(osv-scanner fix:*)",
+      "Bash(npm audit fix:*)",
       "Read(**/appsettings.custom*.json)",
       "mcp__confluence__confluence_delete_page",
       "mcp__confluence__confluence_move_page",
