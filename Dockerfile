@@ -178,13 +178,13 @@ RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
 
 ENV NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/bit-proxy-ca.crt
 
-# Claude Code CLI itself — the agent running in this container.
-RUN npm install -g @anthropic-ai/claude-code
-# The container later runs as a non-root user (--user $(id -u):$(id -g)); only this package's
-# own directory needs to stay writable, for Claude Code's runtime self-update to succeed.
-# Scoped to @anthropic-ai rather than the whole global node_modules tree, so it stays cheap
-# even as more (non-self-updating) global packages are added below.
-RUN chmod -R 777 $(npm root -g)/@anthropic-ai $(npm config get prefix)/bin
+# Claude Code CLI itself — the agent running in this container. Installed in its own npm prefix, the only
+# folder writable by the container user (--user $(id -u):$(id -g)), so that it can update itself at run time
+# (entrypoint.sh, and its own automatic update) while /usr/local stays owned by root. Its bin folder comes
+# last in the PATH, so that a file written there can't shadow a system command.
+RUN npm install -g --prefix /opt/claude-code @anthropic-ai/claude-code \
+    && chmod -R a+rwX /opt/claude-code
+ENV PATH=$PATH:/opt/claude-code/bin
 # Structural code search across C#/TypeScript, matches syntax rather than plain text.
 RUN npm install -g @ast-grep/cli@0.45.3
 # Browser cache of Puppeteer, outside /root: /root is replaced at run time by the mounted slot home,
@@ -195,6 +195,9 @@ RUN npm install -g @mermaid-js/mermaid-cli@11.17.0
 # JSON5 parser (`json5 <file>` prints plain JSON), used to read JSON files with comments and a BOM
 # (e.g. the backend appsettings.json) and pipe them to jq.
 RUN npm install -g json5@2.2.3
+# Global npm prefix at run time, after the global packages above: `npm install -g` and `npm update -g`, used by
+# the self-update of Claude Code, write into /opt/claude-code instead of /usr/local.
+ENV NPM_CONFIG_PREFIX=/opt/claude-code
 
 # Notifications of the agent (see notifications/ and README); speech only so far: queues a text for the
 # speech relay on the WSL host.
