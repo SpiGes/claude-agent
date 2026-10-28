@@ -68,6 +68,9 @@ Expected content of those chapters:
   data is read, written, exported, or logged, which input is parsed (files, archives, XML), and which
   new dependencies or secrets are needed. A deviation from `rules/secure-coding.md` is written down
   with its reason. When the feature changes none of these, the chapter says so in one line.
+  An existing document without this chapter gets it only when the update concerns security, as the
+  last chapter before the diagram chapters; the existing chapters are never renumbered, since other
+  documents refer to them by number.
 - `Configuration` describes all new parameters, with their meaning and their default value.
 - `Deferred design points` lists the points that are decided but not implemented in the first
   version.
