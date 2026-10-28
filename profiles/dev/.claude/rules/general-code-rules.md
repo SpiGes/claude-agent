@@ -4,7 +4,8 @@ paths: ["**/*.cs", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.py", "**/
 
 Follow SOLID, DRY, established design patterns, security, maintainability, and consistency
 with the existing architecture. "Complete code" means what's needed to understand, use, and
-integrate the change, not unrelated surrounding code.
+integrate the change, not unrelated surrounding code. The security rules are detailed in
+`secure-coding.md`.
 
 The list of file extensions above is a generic default. Adjust it to the actual stack of
 each project this file is used with (add or remove extensions as needed), rather than

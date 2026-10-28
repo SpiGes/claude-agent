@@ -46,8 +46,9 @@ To save tokens, prefer these over a full Read + manual scan/edit when they fit:
 - `tree` — quick, compact overview of a directory's structure when a full recursive
   listing isn't needed.
 - `semgrep` — pattern-based static analysis across languages (C#, TypeScript, YAML),
-  useful for the `code-review`/`security-review` skills when a check needs more precision
-  than a plain-text `rg` match.
+  useful for the `code-review`/`security-review`/`security-analysis` skills when a check needs more
+  precision than a plain-text `rg` match. The registry rule sets (e.g. `--config p/csharp`,
+  `--config p/typescript`) are used with `--metrics=off`.
 - `ripgrep` (`rg`) stays the default for plain text search when no structural match is
   needed.
 - `mmdc` (`@mermaid-js/mermaid-cli`) — renders Mermaid diagram code to PNG/SVG/PDF. Requires
@@ -84,6 +85,19 @@ To save tokens, prefer these over a full Read + manual scan/edit when they fit:
   Preferred over hand-written regexes to strip `//` and `/* */` comments.
 - `python3` with `yaml` (PyYAML) — reads a rendered Helm manifest or a values file in a script, when `yq`
   alone isn't enough.
+- `dotnet list <solution> package --vulnerable --include-transitive` — known vulnerabilities of the
+  NuGet packages of a .NET solution, transitive ones included, after a restore. Built into the SDK.
+- `osv-scanner` — known vulnerabilities of the dependencies from the lock files (NuGet
+  `packages.lock.json`, npm `package-lock.json`, Python requirements), transitive ones included:
+  `osv-scanner scan source -r <path> --format json --output <scratchpad>/osv.json`. A .NET project
+  without a lock file is checked with `dotnet list package --vulnerable` instead.
+- `trivy` — misconfigurations of the Helm charts, Kubernetes manifests and Dockerfiles, and a second
+  opinion on vulnerabilities: `trivy config <path>`, `trivy fs --scanners vuln <path>`. Its database
+  is downloaded at the first run, into the cache of the slot home.
+- `gitleaks` — secrets in the working tree or in the git history, always with `--redact`, so that a
+  secret is never printed in the conversation:
+  `gitleaks git --redact --report-path <scratchpad>/gitleaks.json <repository>` (history),
+  `gitleaks dir --redact <path>` (files only).
 
 ## Container environment variables
 
@@ -124,6 +138,34 @@ Interpretation defaults: "analyze" → analysis. "review" → review. "generate"
 - Do not expand a targeted change beyond what was requested; flag possible extensions
   instead of applying them unprompted.
 - State low-risk assumptions explicitly rather than asking unnecessary clarifying questions; ask only when proceeding would clearly go in the wrong direction.
+
+## Security
+
+SpiGes handles confidential statistical data on hospitals and patients, behind role- and unit-based access
+rules. Security is part of every work mode, not a separate step:
+
+- **analysis** — a risk on access control, data protection, input handling, secrets, or dependencies is
+  reported with the other risks, even when the question was about something else.
+- **development** — the code follows `rules/secure-coding.md`. A new or upgraded package is checked for
+  known vulnerabilities before the commit. A security weakness found in the surrounding code is
+  reported, not fixed on the side (see "Do not expand a targeted change").
+- **review** — the checks of `rules/secure-coding.md` are part of every review; a finding gets the
+  `Security` category.
+
+A full security analysis of a repository, a module, or its dependencies follows the `security-analysis`
+skill. The built-in `security-review` skill stays the tool for the pending changes of a branch.
+
+- A tool finding is a lead, not a fact: it's checked against the code, the reachability of the
+  vulnerable code, and the deployment before it's reported as a risk, and the unchecked ones are listed
+  as such.
+- A secret found in a file or in the git history is never printed, copied, or used: only its location
+  and type are reported, and the user decides about its rotation.
+- A vulnerability that isn't fixed yet is never described in a public place (GitHub issue, pull request
+  or commit of a public repository, e.g. the SpiGes organization). It's written to `/shared`, or to the
+  Azure DevOps work item when the user asks for it.
+- No security control is disabled or weakened (authorization attribute, certificate validation, CORS,
+  TLS, validator) to make a build, a test, or a local run work, unless the user explicitly asks for it,
+  and then only in a local, uncommitted change.
 
 ## Commit conventions
 

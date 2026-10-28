@@ -41,11 +41,12 @@ Unless another structure is explicitly requested, a design document is organized
 5. Solution overview
 6. one chapter per design point to resolve
 7. Changes to the existing system
-8. Configuration
-9. Deferred design points
-10. Open points
-11. Static diagrams
-12. Dynamic diagrams
+8. Security
+9. Configuration
+10. Deferred design points
+11. Open points
+12. Static diagrams
+13. Dynamic diagrams
 
 Expected content of those chapters:
 - `Versions` is a table with the version, the date, and a short description of the change,
@@ -62,6 +63,11 @@ Expected content of those chapters:
 - the design point chapters carry the substance of the document.
 - `Changes to the existing system` lists the existing code and behavior that are modified, with
   the associated risk and the way back.
+- `Security` states, for the new or changed entry points (endpoints, jobs, messages, files received),
+  who may call them and how access is checked (roles, policies, filtering by unit), which confidential
+  data is read, written, exported, or logged, which input is parsed (files, archives, XML), and which
+  new dependencies or secrets are needed. A deviation from `rules/secure-coding.md` is written down
+  with its reason. When the feature changes none of these, the chapter says so in one line.
 - `Configuration` describes all new parameters, with their meaning and their default value.
 - `Deferred design points` lists the points that are decided but not implemented in the first
   version.
