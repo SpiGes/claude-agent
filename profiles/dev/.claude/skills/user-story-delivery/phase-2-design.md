@@ -19,6 +19,10 @@ Goal: a design document, based on the functional specification, validated by the
    environment. A setting whose values lead to different behaviours (e.g. an output format that
    produces one file or several) is a design point: the supported values are decided and written
    down, and the behaviour for the other values is defined.
+7. The chapter "Security" is written from the existing access rules of the module (policies, roles,
+   filtering by unit), read in the code, not assumed. A new anonymous or technical entry point, a new
+   kind of input file, or confidential data leaving the system (export, e-mail, log, another service) is
+   a design point with its own choice, and is named in the recap.
 
 ## Rules
 
@@ -29,5 +33,5 @@ Goal: a design document, based on the functional specification, validated by the
 
 ## End of the phase
 
-A recap is given: main choices, open points, impacts on existing behaviour. The user validates the
+A recap is given: main choices, open points, impacts on existing behaviour, security points. The user validates the
 design, or asks for changes.

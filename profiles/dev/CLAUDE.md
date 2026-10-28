@@ -46,8 +46,9 @@ To save tokens, prefer these over a full Read + manual scan/edit when they fit:
 - `tree` — quick, compact overview of a directory's structure when a full recursive
   listing isn't needed.
 - `semgrep` — pattern-based static analysis across languages (C#, TypeScript, YAML),
-  useful for the `code-review`/`security-review` skills when a check needs more precision
-  than a plain-text `rg` match.
+  useful for the `code-review`/`security-review`/`security-analysis` skills when a check needs more
+  precision than a plain-text `rg` match. The registry rule sets (e.g. `--config p/csharp`,
+  `--config p/typescript`) are used with `--metrics=off`.
 - `ripgrep` (`rg`) stays the default for plain text search when no structural match is
   needed.
 - `mmdc` (`@mermaid-js/mermaid-cli`) — renders Mermaid diagram code to PNG/SVG/PDF. Requires
@@ -84,6 +85,34 @@ To save tokens, prefer these over a full Read + manual scan/edit when they fit:
   Preferred over hand-written regexes to strip `//` and `/* */` comments.
 - `python3` with `yaml` (PyYAML) — reads a rendered Helm manifest or a values file in a script, when `yq`
   alone isn't enough.
+- `dotnet list <solution> package --vulnerable --include-transitive` — known vulnerabilities of the
+  NuGet packages of a .NET solution, transitive ones included, after a restore. Built into the SDK.
+- `osv-scanner` — known vulnerabilities of the dependencies from the lock files (NuGet
+  `packages.lock.json`, npm `package-lock.json`, Python requirements), transitive ones included:
+  `osv-scanner scan source -r <path> --format json --output-file <scratchpad>/osv.json`. A .NET project
+  without a lock file is checked with `dotnet list package --vulnerable` instead.
+- `trivy` — misconfigurations of the Helm charts, Kubernetes manifests and Dockerfiles, and a second
+  opinion on vulnerabilities: `trivy config <path>`, `trivy fs --scanners vuln <path>`. Its database
+  is downloaded at the first run, into the cache of the slot home.
+- `gitleaks` — secrets in the working tree or in the git history, always with `--redact`, so that a
+  secret is never printed in the conversation:
+  `gitleaks git --redact --report-path <scratchpad>/gitleaks.json <repository>` (history),
+  `gitleaks dir --redact <path>` (files only).
+- `npm audit --package-lock-only --registry=https://registry.npmjs.org/` — known vulnerabilities of the npm
+  dependencies from `package-lock.json`, without installing them; `--omit=dev` leaves out the build tooling.
+  The public registry is given explicitly: the Nexus registry of the `.npmrc` answers with Sonatype policy
+  results instead (architecture quality, end of life), slower and not limited to vulnerabilities.
+- `eslint-security <path>` — standalone ESLint with security rules for TypeScript and Angular
+  (`@microsoft/eslint-plugin-sdl`, `eslint-plugin-no-unsanitized`), independent of the ESLint of the project.
+  Read-only: `--fix` and another configuration are refused. Angular templates aren't parsed.
+- `pip-audit` — known vulnerabilities of Python packages, from PyPI and OSV:
+  `pip-audit --path <venv>/lib/python3*/site-packages` audits an installed environment, transitive packages
+  included; `pip-audit --disable-pip --no-deps -r <requirements file>` audits a pinned file without installing
+  it (direct packages only). Without these two options, pip-audit resolves the file with pip, which may run
+  the build code of a package. `--fix` isn't used.
+- `bandit` — Python security linter: `bandit -c pyproject.toml -r <path>` when the project configures it (the
+  version pinned by the project, from the agent's virtual environment, is preferred then), `bandit -r <path>`
+  otherwise.
 
 ## Container environment variables
 
@@ -124,6 +153,34 @@ Interpretation defaults: "analyze" → analysis. "review" → review. "generate"
 - Do not expand a targeted change beyond what was requested; flag possible extensions
   instead of applying them unprompted.
 - State low-risk assumptions explicitly rather than asking unnecessary clarifying questions; ask only when proceeding would clearly go in the wrong direction.
+
+## Security
+
+SpiGes handles confidential statistical data on hospitals and patients, behind role- and unit-based access
+rules. Security is part of every work mode, not a separate step:
+
+- **analysis** — a risk on access control, data protection, input handling, secrets, or dependencies is
+  reported with the other risks, even when the question was about something else.
+- **development** — the code follows `rules/secure-coding.md`. A new or upgraded package is checked for
+  known vulnerabilities before the commit. A security weakness found in the surrounding code is
+  reported, not fixed on the side (see "Do not expand a targeted change").
+- **review** — the checks of `rules/secure-coding.md` are part of every review; a security finding gets
+  the `Security` tag after its severity (e.g. "Important, Security").
+
+A full security analysis of a repository, a module, or its dependencies follows the `security-analysis`
+skill. The built-in `security-review` skill stays the tool for the pending changes of a branch.
+
+- A tool finding is a lead, not a fact: it's checked against the code, the reachability of the
+  vulnerable code, and the deployment before it's reported as a risk, and the unchecked ones are listed
+  as such.
+- A secret found in a file or in the git history is never printed, copied, or used: only its location
+  and type are reported, and the user decides about its rotation.
+- A vulnerability that isn't fixed yet is never described in a public place (GitHub issue, pull request
+  or commit of a public repository, e.g. the SpiGes organization). It's written to `/shared`, or to the
+  Azure DevOps work item when the user asks for it.
+- No security control is disabled or weakened (authorization attribute, certificate validation, CORS,
+  TLS, validator) to make a build, a test, or a local run work, unless the user explicitly asks for it,
+  and then only in a local, uncommitted change.
 
 ## Commit conventions
 
@@ -166,8 +223,9 @@ A squash merge keeps the title as the message of the merge commit.
 always run. The `.venv` of a repository is the user's, created on the host: its scripts point to host paths and don't
 run in the container, so it's never used nor recreated by the agent. When a hook needs the tools of the project, the
 agent commits with its own virtual environment, created from the project requirements (e.g. `requirements-dev.txt`)
-under `~/.cache/agent-venvs/<repository>`, at the front of the `PATH`. When a hook can't run, the commit isn't made
-and the error is reported to the user.
+under `~/.cache/agent-venvs/<repository>`, at the front of the `PATH`. It's created with
+`python3 -m venv --upgrade-deps`, so that it doesn't keep the outdated `pip` of the system Python. When a hook can't
+run, the commit isn't made and the error is reported to the user.
 
 ## Files shared with the user
 

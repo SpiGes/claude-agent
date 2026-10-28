@@ -19,7 +19,9 @@ can review.
 
 1. The task and its sibling tasks are read, together with the design chapters it refers to.
 2. The code is written following the project rules (e.g. `csharp-coding-conventions`,
-   `backend.md`), and the line endings of each file are kept (CRLF in the backend).
+   `secure-coding`, `backend.md`), and the line endings of each file are kept (CRLF in the backend).
+   The access rules of the "Security" chapter of the design are implemented in the task that adds the
+   entry point, not left for later, and tested (forbidden and unauthorized paths, see `testing.md`).
 3. Unit tests are written following `testing.md`. Integration tests are added when the project has
    a test for the same flow (e.g. real test files under `Resources/`). Existing tests broken by the
    change are adapted, and the reason is given.
@@ -38,12 +40,21 @@ can review.
    `-p:NuGetAudit=false`). In the backend, code coverage is collected in the same run
    (`--collect:"XPlat Code Coverage"`), then summarized with `reportgenerator`
    (`-reporttypes:TextSummary`, output in the scratchpad).
-6. A recap is given: what was done, deviations from the design (with a proposal), risks, what
+6. Security checks of the change, before the commit:
+   - when a package is added or upgraded, its known vulnerabilities are checked, transitive ones
+     included (`dotnet list package --vulnerable --include-transitive`, `osv-scanner` for a lock file,
+     `npm audit --package-lock-only --registry=https://registry.npmjs.org/` for npm)
+   - a changed TypeScript file of the frontend is checked with `eslint-security <path>`
+   - `gitleaks dir --redact <path>` on each changed file: no secret is committed
+   - a chart or Dockerfile change is checked with `trivy config`, and compared with the target branch
+     (e.g. `origin/main` in the gitops repository)
+7. A recap is given: what was done, deviations from the design (with a proposal), risks, what
    isn't covered by the tests, and, in the backend, the coverage of the classes changed by the task
    (line and branch rates, per class). No target rate is defined: the rate is reported, not judged,
    and the user decides whether more tests are needed. The coverage is given in the recap only, not
-   in the pull request. The user is asked before committing.
-7. One commit per task, following the commit conventions. When a commit turns out to contain the
+   in the pull request. The result of the security checks is part of the recap. The user is asked
+   before committing.
+8. One commit per task, following the commit conventions. When a commit turns out to contain the
    work of another task, it's split before push, after the user's agreement.
 
 ## Testing honestly
@@ -55,11 +66,15 @@ can review.
 
 ## Pull request
 
-1. The own work is reviewed once more on the full diff against the target branch.
+1. The own work is reviewed once more on the full diff against the target branch, the checks of
+   `secure-coding` included, and the commits of the branch are scanned for secrets
+   (`gitleaks git --redact --log-opts="origin/<target branch>..HEAD" .`).
 2. The branch is pushed and the pull request is created (`devops_pull_request_write`), linked to the
    user story and to the development tasks, with the chapters:
    - Context: the need, and the design document
-   - Main Changes: grouped by task, including compatibility and what isn't covered yet
+   - Main Changes: grouped by task, including compatibility and what isn't covered yet, and the
+     security-relevant changes (new entry point and its authorization, new input format, new or
+     upgraded package)
    - Compatibility: what changes per environment (gitops), deployment order between the backend and
      the gitops change, and the settings restricted to some environments
 3. Files changed by the build but not part of the work (e.g. a regenerated API client) aren't
