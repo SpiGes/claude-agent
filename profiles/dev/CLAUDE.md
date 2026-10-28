@@ -46,7 +46,7 @@ To save tokens, prefer these over a full Read + manual scan/edit when they fit:
 - `tree` — quick, compact overview of a directory's structure when a full recursive
   listing isn't needed.
 - `semgrep` — pattern-based static analysis across languages (C#, TypeScript, YAML),
-  useful for the `code-review`/`security-review`/`security-analysis` skills when a check needs more
+  useful for the `code-review`/`security-review` skills when a check needs more
   precision than a plain-text `rg` match. The registry rule sets (e.g. `--config p/csharp`,
   `--config p/typescript`) are used with `--metrics=off`.
 - `ripgrep` (`rg`) stays the default for plain text search when no structural match is
@@ -87,32 +87,13 @@ To save tokens, prefer these over a full Read + manual scan/edit when they fit:
   alone isn't enough.
 - `dotnet list <solution> package --vulnerable --include-transitive` — known vulnerabilities of the
   NuGet packages of a .NET solution, transitive ones included, after a restore. Built into the SDK.
-- `osv-scanner` — known vulnerabilities of the dependencies from the lock files (NuGet
-  `packages.lock.json`, npm `package-lock.json`, Python requirements), transitive ones included:
-  `osv-scanner scan source -r <path> --format json --output-file <scratchpad>/osv.json`. A .NET project
-  without a lock file is checked with `dotnet list package --vulnerable` instead.
-- `trivy` — misconfigurations of the Helm charts, Kubernetes manifests and Dockerfiles, and a second
-  opinion on vulnerabilities: `trivy config <path>`, `trivy fs --scanners vuln <path>`. Its database
-  is downloaded at the first run, into the cache of the slot home.
-- `gitleaks` — secrets in the working tree or in the git history, always with `--redact`, so that a
-  secret is never printed in the conversation:
-  `gitleaks git --redact --report-path <scratchpad>/gitleaks.json <repository>` (history),
-  `gitleaks dir --redact <path>` (files only).
+- OSV API — advisories of one version of a package, for an ecosystem without a check of its own (e.g.
+  Python): `curl -s https://api.osv.dev/v1/query -d '{"package":{"name":"<name>","ecosystem":"PyPI"},"version":"<version>"}'`.
+  Transitive packages aren't covered.
 - `npm audit --package-lock-only --registry=https://registry.npmjs.org/` — known vulnerabilities of the npm
   dependencies from `package-lock.json`, without installing them; `--omit=dev` leaves out the build tooling.
   The public registry is given explicitly: the Nexus registry of the `.npmrc` answers with Sonatype policy
   results instead (architecture quality, end of life), slower and not limited to vulnerabilities.
-- `eslint-security <path>` — standalone ESLint with security rules for TypeScript and Angular
-  (`@microsoft/eslint-plugin-sdl`, `eslint-plugin-no-unsanitized`), independent of the ESLint of the project.
-  Read-only: `--fix` and another configuration are refused. Angular templates aren't parsed.
-- `pip-audit` — known vulnerabilities of Python packages, from PyPI and OSV:
-  `pip-audit --path <venv>/lib/python3*/site-packages` audits an installed environment, transitive packages
-  included; `pip-audit --disable-pip --no-deps -r <requirements file>` audits a pinned file without installing
-  it (direct packages only). Without these two options, pip-audit resolves the file with pip, which may run
-  the build code of a package. `--fix` isn't used.
-- `bandit` — Python security linter: `bandit -c pyproject.toml -r <path>` when the project configures it (the
-  version pinned by the project, from the agent's virtual environment, is preferred then), `bandit -r <path>`
-  otherwise.
 
 ## Container environment variables
 
@@ -167,8 +148,7 @@ rules. Security is part of every work mode, not a separate step:
 - **review** — the checks of `rules/secure-coding.md` are part of every review; a security finding gets
   the `Security` tag after its severity (e.g. "Important, Security").
 
-A full security analysis of a repository, a module, or its dependencies follows the `security-analysis`
-skill. The built-in `security-review` skill stays the tool for the pending changes of a branch.
+The built-in `security-review` skill covers the pending changes of a branch.
 
 - A tool finding is a lead, not a fact: it's checked against the code, the reachability of the
   vulnerable code, and the deployment before it's reported as a risk, and the unchecked ones are listed
