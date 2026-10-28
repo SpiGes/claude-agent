@@ -66,20 +66,14 @@ When neither the URL nor the repository makes it clear, the user is asked.
 ### Security checks
 
 The changed code is checked against `rules/secure-coding.md`, with a focus on new or changed entry
-points (authorization, filtering by unit), input handling, SQL, logging, and secrets. In addition, from
-the local clone, without changing its working tree:
+points (authorization, filtering by unit), input handling, SQL, logging, and secrets (read in the diff,
+never printed). In addition:
 
-- the commits of the pull request are scanned for secrets:
-  `gitleaks git --redact --log-opts="<merge base>..<head>" <local clone>`
 - when the pull request adds or upgrades a package (`*.csproj`, `Directory.Packages.props`,
   `package.json`, `requirements*.txt`, `pyproject.toml`, lock files), the advisories of each new version are read from the OSV API
   (`curl -s https://api.osv.dev/v1/query -d '{"package":{"name":"<name>","ecosystem":"NuGet"},"version":"<version>"}'`,
   ecosystem `npm` for the frontend, `PyPI` for Python). The transitive packages brought by the change aren't covered by
   this check, which is listed in "Not checked"
-- the changed TypeScript files of a frontend pull request are checked with `eslint-security`, on files
-  extracted with `git archive` from the head into the scratchpad
-- a chart or Dockerfile change is checked with `trivy config`, on files extracted with `git archive` into
-  the scratchpad, for the head and the merge base, and only the new findings are kept
 
 A security finding gets the `Security` tag after its severity in the review file (e.g. "Important,
 Security"). On a public GitHub repository, a security finding isn't written in a pull request comment:

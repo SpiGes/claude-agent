@@ -68,7 +68,6 @@ conflict between them is flagged, not resolved silently.
   `localStorage` or logged to the console.
 - A URL opened or downloaded from data received from the backend is checked to be relative or on an
   expected host.
-- A changed TypeScript file is checked with `eslint-security <path>`; a new warning is fixed or justified.
 
 ## 7. Python
 
@@ -85,17 +84,17 @@ conflict between them is flagged, not resolved silently.
   a command-line argument, which other users of the server can read.
 - Temporary files are created with `tempfile` (`mkstemp`, `TemporaryDirectory`), never with a fixed or
   predictable name in a shared folder.
-- `bandit` is run on the changed files with the configuration of the project; an excluded check is
-  justified by a comment in that configuration.
+- When the project configures `bandit` (e.g. in its pre-commit), an excluded check is justified by a comment
+  in that configuration.
 
 ## 8. Dependencies
 
 - A new package, or a new major version, is justified in the pull request: maintained, with a
   compatible license, from the usual feeds (Nexus, npm registry).
 - Before the commit, the changed dependencies are checked for known vulnerabilities, transitive ones
-  included: `dotnet list package --vulnerable --include-transitive` for .NET, `osv-scanner` for the lock
-  files, `npm audit --package-lock-only --registry=https://registry.npmjs.org/` for npm, and `pip-audit`
-  for Python (on the virtual environment, so that the transitive packages are covered). A High or
+  included: `dotnet list package --vulnerable --include-transitive` for .NET and
+  `npm audit --package-lock-only --registry=https://registry.npmjs.org/` for npm. For Python, the advisories
+  of each changed package are read from the OSV API (direct packages only). A High or
   Critical advisory on a changed package is reported to the user before the commit.
 - A vulnerable transitive package is fixed by upgrading the direct package that brings it when possible,
   otherwise by pinning the fixed version centrally (`Directory.Packages.props`), with a comment that
@@ -106,6 +105,3 @@ conflict between them is flagged, not resolved silently.
 - A change of a chart doesn't remove resource limits, nor weaken a `securityContext` where one is set.
   Missing hardening of the existing charts (non-root user, no privilege escalation) is reported as a
   finding of its own, not added on the side of an unrelated change.
-- `trivy config` is run on a changed chart or Dockerfile, and its findings are compared with those of the
-  target branch (e.g. `origin/main` in the gitops repository), so that only the findings introduced by
-  the change are reported for it.

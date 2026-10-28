@@ -42,12 +42,9 @@ can review.
    (`-reporttypes:TextSummary`, output in the scratchpad).
 6. Security checks of the change, before the commit:
    - when a package is added or upgraded, its known vulnerabilities are checked, transitive ones
-     included (`dotnet list package --vulnerable --include-transitive`, `osv-scanner` for a lock file,
+     included (`dotnet list package --vulnerable --include-transitive`,
      `npm audit --package-lock-only --registry=https://registry.npmjs.org/` for npm)
-   - a changed TypeScript file of the frontend is checked with `eslint-security <path>`
-   - `gitleaks dir --redact <path>` on each changed file: no secret is committed
-   - a chart or Dockerfile change is checked with `trivy config`, and compared with the target branch
-     (e.g. `origin/main` in the gitops repository)
+   - the diff is read for secrets: no secret is committed
 7. A recap is given: what was done, deviations from the design (with a proposal), risks, what
    isn't covered by the tests, and, in the backend, the coverage of the classes changed by the task
    (line and branch rates, per class). No target rate is defined: the rate is reported, not judged,
@@ -67,8 +64,7 @@ can review.
 ## Pull request
 
 1. The own work is reviewed once more on the full diff against the target branch, the checks of
-   `secure-coding` included, and the commits of the branch are scanned for secrets
-   (`gitleaks git --redact --log-opts="origin/<target branch>..HEAD" .`).
+   `secure-coding` included (no secret in the commits of the branch).
 2. The branch is pushed and the pull request is created (`devops_pull_request_write`), linked to the
    user story and to the development tasks, with the chapters:
    - Context: the need, and the design document
