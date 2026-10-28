@@ -95,7 +95,8 @@ conflict between them is flagged, not resolved silently.
 - Before the commit, the changed dependencies are checked for known vulnerabilities, transitive ones
   included: `dotnet list package --vulnerable --include-transitive` for .NET, `osv-scanner` for the lock
   files, `npm audit --package-lock-only --registry=https://registry.npmjs.org/` for npm, and `pip-audit`
-  for Python (on the virtual environment, so that the transitive packages are covered). A High or Critical advisory on a changed package is reported to the user before the commit.
+  for Python (on the virtual environment, so that the transitive packages are covered). A High or
+  Critical advisory on a changed package is reported to the user before the commit.
 - A vulnerable transitive package is fixed by upgrading the direct package that brings it when possible,
   otherwise by pinning the fixed version centrally (`Directory.Packages.props`), with a comment that
   gives the advisory.
@@ -105,5 +106,6 @@ conflict between them is flagged, not resolved silently.
 - A change of a chart doesn't remove resource limits, nor weaken a `securityContext` where one is set.
   Missing hardening of the existing charts (non-root user, no privilege escalation) is reported as a
   finding of its own, not added on the side of an unrelated change.
-- `trivy config` is run on a changed chart or Dockerfile, and its findings are compared with those of
-  `origin/main`, so that only the findings introduced by the change are reported for it.
+- `trivy config` is run on a changed chart or Dockerfile, and its findings are compared with those of the
+  target branch (e.g. `origin/main` in the gitops repository), so that only the findings introduced by
+  the change are reported for it.

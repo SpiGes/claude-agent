@@ -198,7 +198,8 @@ RUN pipx install mcp-atlassian==0.23.1
 RUN pipx install mcp-devops-onpremise==2.1.0
 # YAML processor, used to read/patch single fields (e.g. Helm values-*.yaml) without a full rewrite.
 RUN pipx install yq==4.2.0
-# Pattern-based static analysis (C#, TypeScript, YAML), used by the code-review/security-review skills.
+# Pattern-based static analysis (C#, TypeScript, YAML), used by the code-review/security-review/security-analysis
+# skills.
 RUN pipx install semgrep==1.177.0
 # Known vulnerabilities of the Python packages of a virtual environment (`pip-audit --path <site-packages>`),
 # transitive ones included, or of a pinned requirements file without installing it. Used by the security-analysis

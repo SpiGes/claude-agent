@@ -89,7 +89,7 @@ To save tokens, prefer these over a full Read + manual scan/edit when they fit:
   NuGet packages of a .NET solution, transitive ones included, after a restore. Built into the SDK.
 - `osv-scanner` — known vulnerabilities of the dependencies from the lock files (NuGet
   `packages.lock.json`, npm `package-lock.json`, Python requirements), transitive ones included:
-  `osv-scanner scan source -r <path> --format json --output <scratchpad>/osv.json`. A .NET project
+  `osv-scanner scan source -r <path> --format json --output-file <scratchpad>/osv.json`. A .NET project
   without a lock file is checked with `dotnet list package --vulnerable` instead.
 - `trivy` — misconfigurations of the Helm charts, Kubernetes manifests and Dockerfiles, and a second
   opinion on vulnerabilities: `trivy config <path>`, `trivy fs --scanners vuln <path>`. Its database
@@ -107,8 +107,9 @@ To save tokens, prefer these over a full Read + manual scan/edit when they fit:
   Read-only: `--fix` and another configuration are refused. Angular templates aren't parsed.
 - `pip-audit` — known vulnerabilities of Python packages, from PyPI and OSV:
   `pip-audit --path <venv>/lib/python3*/site-packages` audits an installed environment, transitive packages
-  included; `pip-audit -r <requirements file> --disable-pip --no-deps` audits a pinned file without installing
-  it (direct packages only). `--fix` isn't used.
+  included; `pip-audit --disable-pip --no-deps -r <requirements file>` audits a pinned file without installing
+  it (direct packages only). Without these two options, pip-audit resolves the file with pip, which may run
+  the build code of a package. `--fix` isn't used.
 - `bandit` — Python security linter: `bandit -c pyproject.toml -r <path>` when the project configures it (the
   version pinned by the project, from the agent's virtual environment, is preferred then), `bandit -r <path>`
   otherwise.
@@ -163,8 +164,8 @@ rules. Security is part of every work mode, not a separate step:
 - **development** — the code follows `rules/secure-coding.md`. A new or upgraded package is checked for
   known vulnerabilities before the commit. A security weakness found in the surrounding code is
   reported, not fixed on the side (see "Do not expand a targeted change").
-- **review** — the checks of `rules/secure-coding.md` are part of every review; a finding gets the
-  `Security` category.
+- **review** — the checks of `rules/secure-coding.md` are part of every review; a security finding gets
+  the `Security` tag after its severity (e.g. "Important, Security").
 
 A full security analysis of a repository, a module, or its dependencies follows the `security-analysis`
 skill. The built-in `security-review` skill stays the tool for the pending changes of a branch.
@@ -223,8 +224,8 @@ always run. The `.venv` of a repository is the user's, created on the host: its 
 run in the container, so it's never used nor recreated by the agent. When a hook needs the tools of the project, the
 agent commits with its own virtual environment, created from the project requirements (e.g. `requirements-dev.txt`)
 under `~/.cache/agent-venvs/<repository>`, at the front of the `PATH`. It's created with
-`python3 -m venv --upgrade-deps`, so that it doesn't keep the outdated `pip` of the system Python. When a hook can't run, the commit isn't made
-and the error is reported to the user.
+`python3 -m venv --upgrade-deps`, so that it doesn't keep the outdated `pip` of the system Python. When a hook can't
+run, the commit isn't made and the error is reported to the user.
 
 ## Files shared with the user
 

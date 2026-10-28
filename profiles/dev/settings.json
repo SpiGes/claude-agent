@@ -24,7 +24,7 @@
       "Bash(npm explain:*)",
       "Bash(eslint-security:*)",
       "Bash(pip-audit --path:*)",
-      "Bash(pip-audit -r:*)",
+      "Bash(pip-audit --disable-pip --no-deps -r:*)",
       "Bash(bandit:*)"
     ],
     "ask": [

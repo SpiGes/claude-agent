@@ -5,8 +5,9 @@ description: Security analysis of a repository, a module, or the dependencies of
 
 # Security analysis
 
-The analysis is done in three steps. Each step ends with a message to the user, and the next step
-starts only when the user asks for it. It's an analysis: no code, package, or configuration is changed,
+The analysis is done in three steps. Steps 1 and 2 run in a row: the scope is stated, then the analysis
+starts, unless the scope needs a question to the user (see step 1). Step 2 ends with a message to the
+user, and step 3 starts only when the user asks for it. It's an analysis: no code, package, or configuration is changed,
 and nothing is published.
 
 ## Step 1 - Scope
@@ -18,8 +19,9 @@ The scope is taken from the request, and stated before the tools run:
 - the checks: dependencies, secrets, code, configuration (all four by default)
 
 When the request leaves the scope unclear in a way that changes the work (e.g. "the backend" with or
-without its git history, a single module or the solution), the user is asked; otherwise the default is
-stated and the analysis goes on.
+without its git history, a single module or the solution), the user is asked, and step 2 starts after
+the answer. Otherwise, the scope and its defaults are stated in the message that starts step 2, and the
+analysis goes on.
 
 ## Step 2 - Analysis and report
 
@@ -32,12 +34,12 @@ completely. The tool versions and the date of the vulnerability data are written
   `dotnet list <solution> package --vulnerable --include-transitive --format json`. The output gives, per
   project, the vulnerable package, its resolved version, and the advisories.
 - Lock files (`packages.lock.json`, `package-lock.json`, Python requirements):
-  `osv-scanner scan source -r <path> --format json --output <scratchpad>/osv.json`. npm dependencies are
+  `osv-scanner scan source -r <path> --format json --output-file <scratchpad>/osv.json`. npm dependencies are
   read from the lock file; `npm install`/`npm ci` isn't run for the analysis.
 - Python: `pip-audit --path <venv>/lib/python3*/site-packages -f json -o <scratchpad>/pip-audit.json` on a
   virtual environment created from the project requirements (the agent's one under
   `~/.cache/agent-venvs/<repository>`, or a new one in the scratchpad), so that the transitive packages,
-  often not pinned, are covered. Without an environment: `pip-audit -r <file> --disable-pip --no-deps`,
+  often not pinned, are covered. Without an environment: `pip-audit --disable-pip --no-deps -r <file>`,
   direct packages only. A finding on `pip` or `setuptools` of the virtual environment itself concerns the
   tooling, not the project, and is reported apart.
 - Python runtime: the interpreter version the code runs on (e.g. Python 3.7 on the SAS servers) is
@@ -109,7 +111,7 @@ Each finding is checked before it's reported:
 
 ### Report
 
-The report is written in the user's language, to `/shared/<work item id>-<topic>/` when the analysis
+The report is written in the user's language, to `/shared/<work item id>-<topic>/security-report.md` when the analysis
 belongs to a work item, otherwise to `/shared/security-<repository>-<date>/report.md`, with this structure:
 
 1. Header: scope, repositories and commits, date, tools and versions, date of the vulnerability data
