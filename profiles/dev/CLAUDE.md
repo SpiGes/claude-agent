@@ -93,7 +93,7 @@ To save tokens, prefer these over a full Read + manual scan/edit when they fit:
   without a lock file is checked with `dotnet list package --vulnerable` instead.
 - `trivy` — misconfigurations of the Helm charts, Kubernetes manifests and Dockerfiles, and a second
   opinion on vulnerabilities: `trivy config <path>`, `trivy fs --scanners vuln <path>`. Its database
-  is downloaded at the first run, into the cache of the slot home.
+  is downloaded at the first run, into `~/.cache/security-tools`.
 - `gitleaks` — secrets in the working tree or in the git history, always with `--redact`, so that a
   secret is never printed in the conversation:
   `gitleaks git --redact --report-path <scratchpad>/gitleaks.json <repository>` (history),
