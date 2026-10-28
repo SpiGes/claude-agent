@@ -158,6 +158,37 @@ RUN helm_version=v3.22.0 \
     && install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm \
     && rm -rf /tmp/helm.tgz /tmp/linux-amd64
 
+# Security analysis tools, used by the security-analysis skill and the security checks of the reviews. Each one is a
+# single binary, checked against its published SHA-256 as Helm above. Their vulnerability data is downloaded at run
+# time (OSV API, Trivy database in the cache of the slot home), so it's never older than the image.
+# - OSV-Scanner: known vulnerabilities of the dependencies, transitive ones included, from the lock files (NuGet,
+#   npm, PyPI)
+# - Trivy: vulnerabilities, secrets, and misconfigurations (Helm charts, Kubernetes manifests, Dockerfiles)
+# - Gitleaks: secrets in the working tree and in the git history
+RUN osv_scanner_version=v2.7.0 \
+    && osv_scanner_sha256=160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b \
+    && curl -fsSL -o /tmp/osv-scanner \
+        "https://github.com/google/osv-scanner/releases/download/${osv_scanner_version}/osv-scanner_linux_amd64" \
+    && echo "${osv_scanner_sha256}  /tmp/osv-scanner" | sha256sum -c - \
+    && install -m 0755 /tmp/osv-scanner /usr/local/bin/osv-scanner \
+    && rm -f /tmp/osv-scanner
+RUN trivy_version=0.76.1 \
+    && trivy_sha256=c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0 \
+    && curl -fsSL -o /tmp/trivy.tgz \
+        "https://github.com/aquasecurity/trivy/releases/download/v${trivy_version}/trivy_${trivy_version}_Linux-64bit.tar.gz" \
+    && echo "${trivy_sha256}  /tmp/trivy.tgz" | sha256sum -c - \
+    && tar -xzf /tmp/trivy.tgz -C /tmp trivy \
+    && install -m 0755 /tmp/trivy /usr/local/bin/trivy \
+    && rm -f /tmp/trivy.tgz /tmp/trivy
+RUN gitleaks_version=8.30.1 \
+    && gitleaks_sha256=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb \
+    && curl -fsSL -o /tmp/gitleaks.tgz \
+        "https://github.com/gitleaks/gitleaks/releases/download/v${gitleaks_version}/gitleaks_${gitleaks_version}_linux_x64.tar.gz" \
+    && echo "${gitleaks_sha256}  /tmp/gitleaks.tgz" | sha256sum -c - \
+    && tar -xzf /tmp/gitleaks.tgz -C /tmp gitleaks \
+    && install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks \
+    && rm -f /tmp/gitleaks.tgz /tmp/gitleaks
+
 ENV PIPX_HOME=/opt/pipx
 ENV PIPX_BIN_DIR=/usr/local/bin
 
