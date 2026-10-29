@@ -224,6 +224,10 @@ ENV NUGET_CERT_REVOCATION_MODE=offline
 # its permissions; it's writable by every user, since the container user is only known at run time.
 ENV NUGET_PACKAGES=/var/cache/nuget/packages
 RUN mkdir -p /var/cache/nuget/packages && chmod 1777 /var/cache/nuget/packages
+# Home of the build containers (launch.sh, claude_build): a Docker volume is mounted here, holding the VS Code
+# server and its extensions. Same permissions as the NuGet cache, for the same reason. The agent containers
+# keep /root, replaced by the home of their slot.
+RUN mkdir -p /home/build && chmod 1777 /home/build
 # Point Python/requests and OpenSSL-based tooling at the system CA bundle (includes the
 # corporate proxy certs installed above).
 ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt

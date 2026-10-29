@@ -338,10 +338,10 @@ The person's own work on a workspace (editing, terminal, Git, builds, debugging,
 
 - **One build container per workspace**, started by `claude_build` from the folder of the workspace, in the background, from the agent image. Its name is `build-<folder>-<hash of the path>` (the folder above a `branch` folder, as for the notifications). `claude_build` again on a running one does nothing.
 - **The same workspace as the agent**, mounted as `/workspace`: both containers see the same files, with the same paths (the `obj` folders of .NET are valid on both sides).
-- **None of the agent's settings**: no `.env`, no slot home, no memory, no `CLAUDE.md`. It reads its own env file, `AGENT_BUILD_ENV_FILE` (default `$AGENT_HOMES_DIR/build.env`), with the person's own Git tokens and commit authorship, and mounts its own home, `AGENT_BUILD_HOME` (default `$AGENT_HOMES_DIR/build/home`), shared by the build containers of every workspace, so that the VS Code server and its extensions are installed once.
+- **None of the agent's settings**: no `.env`, no slot home, no memory, no `CLAUDE.md`. It reads its own env file, `AGENT_BUILD_ENV_FILE` (default `$AGENT_HOMES_DIR/build.env`), with the person's own Git tokens and commit authorship, and has its own home, `/home/build`, in a Docker volume, `AGENT_BUILD_HOME_VOLUME` (default `bfs-claude-agent-build-home`), shared by the build containers of every workspace, so that the VS Code server and its extensions are installed once, outside the file system of WSL2. `docker volume rm bfs-claude-agent-build-home` (build containers stopped) starts it again from scratch: VS Code installs the server and the extensions again at the next attachment.
 - **`/shared` is mounted**, so that the `appsettings.custom.json` links of the backend, which point to `/shared/...`, work as in the agent container.
 - **Hardened**: no Linux capability (`--cap-drop ALL`) and no privilege escalation (`no-new-privileges`). The entrypoint doesn't update Claude Code there (`AGENT_CONTAINER_ROLE=build`).
-- **Stopped and created again**: `claude_build_stop` removes the container, and the next `claude_build` reads the env file again, e.g. after a token rotation. The home and the NuGet volume are kept.
+- **Stopped and created again**: `claude_build_stop` removes the container, and the next `claude_build` reads the env file again, e.g. after a token rotation. The volumes of the home and of the NuGet cache are kept.
 - **The NuGet cache is a Docker volume**, `AGENT_NUGET_VOLUME` (default `bfs-claude-agent-nuget`), mounted on `/var/cache/nuget/packages` (`NUGET_PACKAGES`) in the agent and build containers. The NuGet cache of the WSL2 host isn't used by the containers.
 
 ### Setup
@@ -512,7 +512,7 @@ Nothing personal or secret lives inside this repository:
 - `AGENT_HOMES_DIR` (default `$HOME/.claude-agent-homes`), one subfolder per profile, holds Claude Code's own state: `slots/<n>/`, the home of each slot (local configuration, session history), and `projects/`, shared by the slots (memory, session transcripts), see "Several agents at the same time". It also holds a shared `CLAUDE.user.md` at its root (see "A personal preference" above).
 - `AGENT_ENV_FILE` (default `$AGENT_HOMES_DIR/.env`) holds the real Claude Code token, the Git tokens, the commit authorship of each server, and, when GitHub is used, the agent account's GitHub API token; only `.env.example`, with placeholders, is committed here.
 - `SHARED_BASE_DIR` (default `~/.agents/shared`) holds ad-hoc documents shared with the agent, outside any project repository.
-- `AGENT_BUILD_ENV_FILE` (default `$AGENT_HOMES_DIR/build.env`) holds the person's Git tokens and authorship for the build container, and `AGENT_BUILD_HOME` (default `$AGENT_HOMES_DIR/build/home`) its home (see "Build container for VS Code"); only `build.env.example` is committed here.
+- `AGENT_BUILD_ENV_FILE` (default `$AGENT_HOMES_DIR/build.env`) holds the person's Git tokens and authorship for the build container (see "Build container for VS Code"); only `build.env.example` is committed here. The home of the build containers and the NuGet cache are Docker volumes, outside these folders.
 
 ## Troubleshooting
 

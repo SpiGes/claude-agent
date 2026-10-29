@@ -19,10 +19,10 @@ export AGENT_VOICE_LANGUAGE="${AGENT_VOICE_LANGUAGE:-french}"
 export AGENT_MAX_SLOTS="${AGENT_MAX_SLOTS:-3}"
 # Docker volume of the NuGet package cache, shared by the agent and the build containers.
 export AGENT_NUGET_VOLUME="${AGENT_NUGET_VOLUME:-bfs-claude-agent-nuget}"
-# Build container for VS Code (see README, "Build container for VS Code"): its own env file and home, none
-# of the agent's.
+# Build container for VS Code (see README, "Build container for VS Code"): its own env file, and its own home
+# in a Docker volume, none of the agent's.
 export AGENT_BUILD_ENV_FILE="${AGENT_BUILD_ENV_FILE:-$AGENT_HOMES_DIR/build.env}"
-export AGENT_BUILD_HOME="${AGENT_BUILD_HOME:-$AGENT_HOMES_DIR/build/home}"
+export AGENT_BUILD_HOME_VOLUME="${AGENT_BUILD_HOME_VOLUME:-bfs-claude-agent-build-home}"
 
 # Name that starts each notification of an agent: the name of its workspace folder, or of the folder
 # above it when the workspace is a "branch" folder (e.g. backend/branch gives "backend"). AGENT_NOTIFY_NAME
@@ -209,8 +209,9 @@ _claude_build_name(){
 # Starts the build container of the current workspace in the background, unless it's already running (see
 # README, "Build container for VS Code"). VS Code attaches to it with the Dev Containers extension. It gets the
 # workspace as /workspace, like the agent, but none of the agent's settings: its own env file
-# (AGENT_BUILD_ENV_FILE: the person's Git tokens and authorship) and its own home (AGENT_BUILD_HOME, shared by
-# the build containers of every workspace, so that the VS Code server and its extensions are installed once).
+# (AGENT_BUILD_ENV_FILE: the person's Git tokens and authorship) and its own home, /home/build, in a Docker
+# volume (AGENT_BUILD_HOME_VOLUME) shared by the build containers of every workspace, so that the VS Code server
+# and its extensions are installed once, outside the file system of the host.
 # A stopped container is removed and created again, so that a start always reads the env file again (e.g.
 # after a token rotation).
 claude_build(){
@@ -225,18 +226,16 @@ claude_build(){
         return 1
     fi
     docker rm "$name" >/dev/null 2>&1
-    # Created here, by the person, since Docker would create a missing mount point with root as owner.
-    mkdir -p "$AGENT_BUILD_HOME" || return
 
     docker run -d --init --name "$name" \
       --label bfs-claude-agent.role=build \
       --label "bfs-claude-agent.workspace=$PWD" \
       --user $(id -u):$(id -g) \
       --cap-drop ALL --security-opt no-new-privileges \
-      -e HOME=/root \
+      -e HOME=/home/build \
       -e AGENT_CONTAINER_ROLE=build \
       --env-file "$AGENT_BUILD_ENV_FILE" \
-      -v "$AGENT_BUILD_HOME:/root" \
+      -v "$AGENT_BUILD_HOME_VOLUME:/home/build" \
       -v "$AGENT_NUGET_VOLUME:/var/cache/nuget/packages" \
       -v "$PWD:/workspace" \
       -v "$SHARED_BASE_DIR:/shared" \
@@ -254,8 +253,8 @@ claude_build(){
     echo "Build container $name started for $PWD: attach VS Code to it (Dev Containers: Attach to Running Container)."
 }
 
-# Stops and removes the build container of the current workspace. Its home (AGENT_BUILD_HOME) and the NuGet
-# volume are kept.
+# Stops and removes the build container of the current workspace. The volumes of its home and of the NuGet
+# cache are kept.
 claude_build_stop(){
     local name
     name="$(_claude_build_name)"
