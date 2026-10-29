@@ -179,9 +179,9 @@ RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
 ENV NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/bit-proxy-ca.crt
 
 # Claude Code CLI itself — the agent running in this container. Installed in its own npm prefix, the only
-# folder writable by the container user (--user $(id -u):$(id -g)), so that it can update itself at run time
-# (entrypoint.sh, and its own automatic update) while /usr/local stays owned by root. Its bin folder comes
-# last in the PATH, so that a file written there can't shadow a system command.
+# folder of the image made writable for the container user (--user $(id -u):$(id -g)), so that it can update
+# itself at run time (entrypoint.sh, and its own automatic update) while /usr/local stays owned by root. Its
+# bin folder comes last in the PATH, so that a file written there can't shadow a system command.
 RUN npm install -g --prefix /opt/claude-code @anthropic-ai/claude-code \
     && chmod -R a+rwX /opt/claude-code
 ENV PATH=$PATH:/opt/claude-code/bin
