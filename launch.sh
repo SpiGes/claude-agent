@@ -17,6 +17,12 @@ export AGENT_VOICE_LANGUAGE="${AGENT_VOICE_LANGUAGE:-french}"
 # Number of agents of one profile that can run at the same time, each in its own slot (see README,
 # "Several agents at the same time").
 export AGENT_MAX_SLOTS="${AGENT_MAX_SLOTS:-3}"
+# Docker volume of the NuGet package cache, shared by the agent and the build containers.
+export AGENT_NUGET_VOLUME="${AGENT_NUGET_VOLUME:-bfs-claude-agent-nuget}"
+# Build container for VS Code (see README, "Build container for VS Code"): its own env file and home, none
+# of the agent's.
+export AGENT_BUILD_ENV_FILE="${AGENT_BUILD_ENV_FILE:-$AGENT_HOMES_DIR/build.env}"
+export AGENT_BUILD_HOME="${AGENT_BUILD_HOME:-$AGENT_HOMES_DIR/build/home}"
 
 # Name that starts each notification of an agent: the name of its workspace folder, or of the folder
 # above it when the workspace is a "branch" folder (e.g. backend/branch gives "backend"). AGENT_NOTIFY_NAME
@@ -159,8 +165,7 @@ _claude_agent()(
     docker run -it --rm --user $(id -u):$(id -g) \
       -e HOME=/root \
       -e AGENT_SLOT="$slot" \
-      -e NUGET_PACKAGES=/home/$USER/.nuget/packages \
-      -v /home/$USER/.nuget/packages:/home/$USER/.nuget/packages \
+      -v "$AGENT_NUGET_VOLUME:/var/cache/nuget/packages" \
       --env-file $AGENT_ENV_FILE \
       -v "$home:/root" \
       -v "$AGENT_HOMES_DIR/$profile/projects:/root/.claude/projects" \
@@ -186,6 +191,80 @@ claude_dev_bash(){
 
 claude_qualitycheck(){
     _claude_agent qualitycheck claude "$@"
+}
+
+# Name of the build container of the current workspace: "build-", the name of the workspace folder (or of the
+# folder above it for a "branch" folder, as for the notifications), and a short hash of its path, so that two
+# workspaces with the same folder name get two containers. Docker accepts only [a-zA-Z0-9_.-] in a name.
+_claude_build_name(){
+    local name="${PWD##*/}"
+    if [ "$name" = "branch" ]; then
+        local parent="${PWD%/*}"
+        name="${parent##*/}"
+    fi
+    name="$(printf '%s' "$name" | tr -c 'a-zA-Z0-9_.-' '-')"
+    echo "build-$name-$(printf '%s' "$PWD" | sha256sum | cut -c1-6)"
+}
+
+# Starts the build container of the current workspace in the background, unless it's already running (see
+# README, "Build container for VS Code"). VS Code attaches to it with the Dev Containers extension. It gets the
+# workspace as /workspace, like the agent, but none of the agent's settings: its own env file
+# (AGENT_BUILD_ENV_FILE: the person's Git tokens and authorship) and its own home (AGENT_BUILD_HOME, shared by
+# the build containers of every workspace, so that the VS Code server and its extensions are installed once).
+# A stopped container is removed and created again, so that a start always reads the env file again (e.g.
+# after a token rotation).
+claude_build(){
+    local name
+    name="$(_claude_build_name)"
+    if [ "$(docker inspect -f '{{.State.Running}}' "$name" 2>/dev/null)" = "true" ]; then
+        echo "Build container $name already running for $PWD."
+        return 0
+    fi
+    if [ ! -f "$AGENT_BUILD_ENV_FILE" ]; then
+        echo "$AGENT_BUILD_ENV_FILE not found: create it from build.env.example (see README, \"Build container for VS Code\")." >&2
+        return 1
+    fi
+    docker rm "$name" >/dev/null 2>&1
+    # Created here, by the person, since Docker would create a missing mount point with root as owner.
+    mkdir -p "$AGENT_BUILD_HOME" || return
+
+    docker run -d --init --name "$name" \
+      --label bfs-claude-agent.role=build \
+      --label "bfs-claude-agent.workspace=$PWD" \
+      --user $(id -u):$(id -g) \
+      --cap-drop ALL --security-opt no-new-privileges \
+      -e HOME=/root \
+      -e AGENT_CONTAINER_ROLE=build \
+      --env-file "$AGENT_BUILD_ENV_FILE" \
+      -v "$AGENT_BUILD_HOME:/root" \
+      -v "$AGENT_NUGET_VOLUME:/var/cache/nuget/packages" \
+      -v "$PWD:/workspace" \
+      -v "$SHARED_BASE_DIR:/shared" \
+      bfs-claude-agent sleep infinity >/dev/null || return
+
+    # The entrypoint stops the container when a setting of the env file is missing or malformed (authorship,
+    # certificates): its message is shown and the container removed.
+    sleep 2
+    if [ "$(docker inspect -f '{{.State.Running}}' "$name" 2>/dev/null)" != "true" ]; then
+        docker logs "$name" >&2
+        docker rm "$name" >/dev/null 2>&1
+        echo "Build container $name didn't start, see the message above." >&2
+        return 1
+    fi
+    echo "Build container $name started for $PWD: attach VS Code to it (Dev Containers: Attach to Running Container)."
+}
+
+# Stops and removes the build container of the current workspace. Its home (AGENT_BUILD_HOME) and the NuGet
+# volume are kept.
+claude_build_stop(){
+    local name
+    name="$(_claude_build_name)"
+    if docker stop "$name" >/dev/null 2>&1; then
+        docker rm "$name" >/dev/null 2>&1
+        echo "Build container $name stopped."
+    else
+        echo "No build container running for $PWD."
+    fi
 }
 
 # Stops the speech relay of the speech notifications, e.g. to apply a new setting (voice, speaker); the next

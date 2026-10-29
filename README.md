@@ -305,8 +305,9 @@ With the voice input enabled, every process of the container can record the micr
 | `claude_qualitycheck` | Starts the agent in review-only mode (qualitycheck profile, read-only, no MCP server) |
 | `claude_notify_speech_stop` | Stops the speech relay of the speech notifications (see "Optional: speech notifications"); the next launch of an agent starts it again |
 | `claude_voice_on` / `claude_voice_off` | Enables or disables the voice input (microphone) for the next launches of an agent (see "Voice input") |
+| `claude_build` / `claude_build_stop` | Starts or stops the build container of the current workspace, to which VS Code attaches (see "Build container for VS Code") |
 
-Each command starts a new container, removed on exit (--rm); nothing needs to be stopped or cleaned up by hand. Several agents can run at the same time, see "Several agents at the same time" below.
+Each agent command starts a new container, removed on exit (--rm); nothing needs to be stopped or cleaned up by hand. Several agents can run at the same time, see "Several agents at the same time" below.
 
 ### Working across several repositories at once
 
@@ -328,6 +329,80 @@ A certificate that only one person needs, for example the self-signed certificat
 ### A personal preference, shared across every profile
 
 A habit that should apply regardless of which profile is running, for example a keyword that switches a response to technical English, is written once to `$AGENT_USER_FILE` (default `$AGENT_HOMES_DIR/CLAUDE.user.md`), a plain file outside any profile that every profile's `CLAUDE.md` imports automatically. It can be edited directly from the WSL2 host, not only from inside a session.
+
+## Build container for VS Code
+
+The person's own work on a workspace (editing, terminal, Git, builds, debugging, `ng serve`) runs in a second container, the build container, to which VS Code attaches with the Dev Containers extension. Nothing is run in WSL2 on a folder that the agent container can write to: a file written there (Git configuration of a repository, build file, VS Code task) is only run inside a container, never in WSL2, which can start Windows programs.
+
+### How it works
+
+- **One build container per workspace**, started by `claude_build` from the folder of the workspace, in the background, from the agent image. Its name is `build-<folder>-<hash of the path>` (the folder above a `branch` folder, as for the notifications). `claude_build` again on a running one does nothing.
+- **The same workspace as the agent**, mounted as `/workspace`: both containers see the same files, with the same paths (the `obj` folders of .NET are valid on both sides).
+- **None of the agent's settings**: no `.env`, no slot home, no memory, no `CLAUDE.md`. It reads its own env file, `AGENT_BUILD_ENV_FILE` (default `$AGENT_HOMES_DIR/build.env`), with the person's own Git tokens and commit authorship, and mounts its own home, `AGENT_BUILD_HOME` (default `$AGENT_HOMES_DIR/build/home`), shared by the build containers of every workspace, so that the VS Code server and its extensions are installed once.
+- **`/shared` is mounted**, so that the `appsettings.custom.json` links of the backend, which point to `/shared/...`, work as in the agent container.
+- **Hardened**: no Linux capability (`--cap-drop ALL`) and no privilege escalation (`no-new-privileges`). The entrypoint doesn't update Claude Code there (`AGENT_CONTAINER_ROLE=build`).
+- **Stopped and created again**: `claude_build_stop` removes the container, and the next `claude_build` reads the env file again, e.g. after a token rotation. The home and the NuGet volume are kept.
+- **The NuGet cache is a Docker volume**, `AGENT_NUGET_VOLUME` (default `bfs-claude-agent-nuget`), mounted on `/var/cache/nuget/packages` (`NUGET_PACKAGES`) in the agent and build containers. The NuGet cache of the WSL2 host isn't used by the containers.
+
+### Setup
+
+1. The image is rebuilt (Step 2 of Installation).
+2. The env file is created from the example, then filled in with tokens dedicated to the build container (one PAT or token per server, distinct from the tokens of the WSL2 host and of the agent):
+   ```bash
+   cp ~/.agents/bfs-claude-agent/build.env.example ~/.claude-agent-homes/build.env
+   ```
+   Before the first start, each token can be checked from WSL2, without printing it, e.g. for GitHub (`200` expected):
+   ```bash
+   curl -s -o /dev/null -w '%{http_code}\n' -H "$(sed -n 's/^GIT_CONFIG_VALUE_1=//p' ~/.claude-agent-homes/build.env)" https://api.github.com/user
+   ```
+3. In the user settings of VS Code (Windows), credential forwarding from the host to containers is turned off:
+   ```json
+   "dev.containers.copyGitConfig": false,
+   "dev.containers.gitCredentialHelperConfigLocation": "none"
+   ```
+4. After a first attachment (see Usage below), the configuration of the container is opened with "Dev Containers: Open Named Configuration File", and filled in, e.g.:
+   ```json
+   {
+     "workspaceFolder": "/workspace",
+     "extensions": ["ms-dotnettools.csdevkit", "angular.ng-template"],
+     "forwardPorts": [56702, 4200],
+     "settings": {
+       "git.terminalAuthentication": false,
+       "github.gitAuthentication": false
+     }
+   }
+   ```
+   The two settings keep VS Code from offering the person's GitHub account, or a credential prompt of Windows, to Git in the container: Git uses the tokens of `build.env` only. The configuration is attached to the name of the container, so it's done once per workspace.
+
+### Usage
+
+1. In a WSL2 terminal, from the folder of the workspace: `claude_build`.
+2. In VS Code: "Dev Containers: Attach to Running Container", the `build-...` container, then "Open Folder" on a repository or worktree under `/workspace`.
+3. Another worktree: "File, New Window", same attachment, another folder; any number of windows can be attached to the same container. "File, Open Recent" lists the folders already opened.
+4. The terminal of VS Code runs in the build container: `git`, `dotnet`, `npm`, as before. Ports are forwarded by VS Code to `localhost` on Windows; when a port is already taken (two backends at once), VS Code picks another local one.
+
+Rules:
+
+- VS Code never attaches to the agent container: Dev Containers would add its credential forwarding there.
+- Git, builds, and runs are no longer started in WSL2 on the workspace, including `git difftool` and `git mergetool`: a container can't start a Windows program, so the diff and merge editors of VS Code are used instead.
+
+### Check
+
+From a terminal of VS Code attached to the build container:
+
+```bash
+env | grep -cE '^(CLAUDE_CODE|DEVOPS_PAT|GH_TOKEN|JIRA|CONFLUENCE|SPIGES_)'   # 0: no setting of the agent
+git config --show-origin --get-all credential.helper                          # nothing: no credential forwarding
+echo "${SSH_AUTH_SOCK:-none} ${GIT_ASKPASS:-none}"                            # "none none"
+echo "$NUGET_PACKAGES"                                                        # /var/cache/nuget/packages
+```
+
+### Limits
+
+- Services of the host (a local Postgres, MinIO) are reached through `host.docker.internal`; for settings that point to `localhost`, the `port-forward.py` script of the backend-run skill of the SpiGes backend can be run in the terminal, as in the agent container.
+- The HTTPS development certificate of .NET is created in the build container (`dotnet dev-certs https`), and isn't trusted by the browser of Windows; the HTTP profile works without it.
+- The build container runs the code of the workspace, written by the person and by the agent: a build file changed by mistake or on purpose runs there, with the tokens of `build.env`, but without access to WSL2 or Windows. Changes are still reviewed before a push.
+- On the first restore, the NuGet volume is empty: every package is downloaded once.
 
 ## Several agents at the same time
 
@@ -418,6 +493,7 @@ bfs-claude-agent/
     nexus-ca.pem
     swissgov-root.cer
   .env.example
+  build.env.example
   profiles/
     dev/
       CLAUDE.md
@@ -436,6 +512,7 @@ Nothing personal or secret lives inside this repository:
 - `AGENT_HOMES_DIR` (default `$HOME/.claude-agent-homes`), one subfolder per profile, holds Claude Code's own state: `slots/<n>/`, the home of each slot (local configuration, session history), and `projects/`, shared by the slots (memory, session transcripts), see "Several agents at the same time". It also holds a shared `CLAUDE.user.md` at its root (see "A personal preference" above).
 - `AGENT_ENV_FILE` (default `$AGENT_HOMES_DIR/.env`) holds the real Claude Code token, the Git tokens, the commit authorship of each server, and, when GitHub is used, the agent account's GitHub API token; only `.env.example`, with placeholders, is committed here.
 - `SHARED_BASE_DIR` (default `~/.agents/shared`) holds ad-hoc documents shared with the agent, outside any project repository.
+- `AGENT_BUILD_ENV_FILE` (default `$AGENT_HOMES_DIR/build.env`) holds the person's Git tokens and authorship for the build container, and `AGENT_BUILD_HOME` (default `$AGENT_HOMES_DIR/build/home`) its home (see "Build container for VS Code"); only `build.env.example` is committed here.
 
 ## Troubleshooting
 

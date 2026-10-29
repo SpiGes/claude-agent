@@ -5,7 +5,10 @@ set -e
 # In case of failure (unavailable network, etc.), the process continues anyway —
 
 # Never block the startup due to a failed update.
-npm update -g @anthropic-ai/claude-code --silent 2>/dev/null || true
+# Skipped in a build container (AGENT_CONTAINER_ROLE=build, set by launch.sh), which doesn't run Claude Code.
+if [ "${AGENT_CONTAINER_ROLE:-agent}" = "agent" ]; then
+    npm update -g @anthropic-ai/claude-code --silent 2>/dev/null || true
+fi
 
 fail(){
     echo "entrypoint: $1" >&2

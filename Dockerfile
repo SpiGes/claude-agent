@@ -219,6 +219,11 @@ ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 ENV DOTNET_NOLOGO=1
 ENV DOTNET_CLI_TELEMETRY_OPTOUT=1
 ENV NUGET_CERT_REVOCATION_MODE=offline
+# NuGet package cache, outside /root and outside the host: launch.sh mounts a Docker volume here, shared by
+# the agent and the build containers. On its first use, Docker copies this folder into the empty volume with
+# its permissions; it's writable by every user, since the container user is only known at run time.
+ENV NUGET_PACKAGES=/var/cache/nuget/packages
+RUN mkdir -p /var/cache/nuget/packages && chmod 1777 /var/cache/nuget/packages
 # Point Python/requests and OpenSSL-based tooling at the system CA bundle (includes the
 # corporate proxy certs installed above).
 ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
