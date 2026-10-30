@@ -158,6 +158,19 @@ RUN helm_version=v3.22.0 \
     && install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm \
     && rm -rf /tmp/helm.tgz /tmp/linux-amd64
 
+# Dart Sass, the `sass` binary that Hugo calls to compile the SCSS of a Docsy site (e.g. the
+# handbooks), to check a site build before it's pushed. Hugo itself isn't installed: each site
+# brings its own version through the npm package `hugo-extended`. The version follows the
+# `dart_sass` entry of `tool-versions.json` in the SpiGes handbook. The archive is checked
+# against its published SHA-256, kept in a shell variable as for Helm above.
+RUN sass_version=1.102.0 \
+    && sass_sha256=2a2ce6036f94534b39356252b1a3d4aa7879ab139c73bf62f7c9b5beafcfc367 \
+    && curl -fsSL -o /tmp/dart-sass.tgz "https://github.com/sass/dart-sass/releases/download/${sass_version}/dart-sass-${sass_version}-linux-x64.tar.gz" \
+    && echo "${sass_sha256}  /tmp/dart-sass.tgz" | sha256sum -c - \
+    && tar -xzf /tmp/dart-sass.tgz -C /opt \
+    && ln -s /opt/dart-sass/sass /usr/local/bin/sass \
+    && rm /tmp/dart-sass.tgz
+
 ENV PIPX_HOME=/opt/pipx
 ENV PIPX_BIN_DIR=/usr/local/bin
 
