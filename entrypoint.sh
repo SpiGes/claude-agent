@@ -53,6 +53,18 @@ if git_server_enabled https://bitbucket.bit.admin.ch/ BITBUCKET; then
     configure_authorship BITBUCKET /tmp/gitconfig-bitbucket
 fi
 
+# Git tokens from the secret broker (see README, "Secret broker"), only in a container that has one (BROKER_URL,
+# set by launch.sh for the agent containers); the file is included by the system Git configuration. Git asks the
+# broker through git-credential-broker; the path of the repository is sent for Bitbucket, whose tokens are given
+# per repository, and for GitHub, whose tokens are given per organization. The Azure DevOps Server also offers
+# Negotiate and NTLM, which curl would prefer and which fail with a PAT: Basic is sent right away.
+if [ -n "${BROKER_URL:-}" ]; then
+    git config --file /tmp/gitconfig-broker credential.helper broker
+    git config --file /tmp/gitconfig-broker credential.https://bitbucket.bit.admin.ch.useHttpPath true
+    git config --file /tmp/gitconfig-broker credential.https://github.com.useHttpPath true
+    git config --file /tmp/gitconfig-broker http.https://devops-server.admin.ch.proactiveAuth basic
+fi
+
 # Personal CA certificates, from the folder given by EXTRA_CA_CERTS_DIR (.env), e.g. the self-signed
 # certificate of a MinIO running on the developer machine. The container runs as a non-root user,
 # so update-ca-certificates can't be used here: the certificates are appended to a copy of the

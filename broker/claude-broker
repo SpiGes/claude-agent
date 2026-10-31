@@ -45,11 +45,13 @@ LOG_FILE = os.environ.get("BROKER_LOG", "/log/broker.log")
 ADMIN_SOCKET = os.environ.get("BROKER_ADMIN_SOCKET", "/tmp/claude-broker/admin.sock")
 NOTIFY_INTERVAL_SECONDS = 120
 MAX_REQUEST_BYTES = 64 * 1024
+MAX_LOG_BYTES = 1024 * 1024
 
 GROUPS = ("git", "gh")
 KEY_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]*$")
 GIT_KEY_PATTERN = re.compile(r"^GIT_(\d+)_(URL|USERNAME|PASSWORD|BEARER)$")
 GH_KEY_PATTERN = re.compile(r"^GH_([A-Z0-9_]+?)_(TOKEN|OWNER)$")
+GH_OWNER_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,100}$")
 DEFAULT_GIT_USERNAME = "token"
 
 
@@ -282,6 +284,8 @@ class Broker:
                 f"and in {format_duration(MAX_SECONDS)} at the latest.")
 
     def revoke(self, group):
+        if group != "all" and group not in GROUPS:
+            raise ValueError(f"unknown group '{group}' (groups: {', '.join(GROUPS)}, or all)")
         with self.lock:
             groups = list(self.opened) if group == "all" else [group]
             for name in groups:
@@ -344,8 +348,12 @@ class ServiceHandler(BaseHTTPRequestHandler):
         if self.path != "/v1/git":
             self._reply(404, "unknown path")
             return
-        length = int(self.headers.get("Content-Length") or 0)
-        if length > MAX_REQUEST_BYTES:
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            self._reply(400, "invalid Content-Length")
+            return
+        if length < 0 or length > MAX_REQUEST_BYTES:
             self._reply(413, "request too large")
             return
         request = self.rfile.read(length).decode("utf-8", errors="replace")
@@ -362,6 +370,10 @@ class ServiceHandler(BaseHTTPRequestHandler):
             self._reply(404, "unknown path")
             return
         owner = urllib.parse.parse_qs(url.query).get("owner", [""])[0]
+        # The owner is written to the log and to the answer: only the characters of a GitHub name are accepted.
+        if owner and not GH_OWNER_PATTERN.match(owner):
+            self._reply(400, "invalid owner")
+            return
 
         def action():
             token, name = BROKER.gh_token(owner)
@@ -407,7 +419,18 @@ class AdminServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     daemon_threads = True
 
 
+def rotate_log():
+    """Keeps the log under MAX_LOG_BYTES: a larger log becomes BROKER_LOG.1 (replacing the previous one) when the
+    broker starts."""
+    try:
+        if os.path.getsize(LOG_FILE) > MAX_LOG_BYTES:
+            os.replace(LOG_FILE, LOG_FILE + ".1")
+    except OSError:
+        pass
+
+
 def serve():
+    rotate_log()
     os.makedirs(os.path.dirname(ADMIN_SOCKET), mode=0o700, exist_ok=True)
     if os.path.exists(ADMIN_SOCKET):
         os.unlink(ADMIN_SOCKET)

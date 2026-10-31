@@ -13,6 +13,10 @@ real_gh=/usr/bin/gh
 if [ -z "${BROKER_URL:-}" ]; then
     exec "$real_gh" "$@"
 fi
+# Commands that don't call the API run without a token.
+case "${1:-}" in
+    ""|-h|--help|help|--version|version|completion) exec "$real_gh" "$@" ;;
+esac
 
 # Owner of a repository given as owner/repo, host/owner/repo, or a URL.
 repo_owner(){

@@ -259,14 +259,10 @@ RUN git config --system --add safe.directory /backend && \
     git config --system user.name "Claude Agent" && \
     git config --system user.email "claude-agent@spiges.local"
 
-# Git tokens from the secret broker (git-credential-broker), asked when a server requires authentication. The
-# path of the repository is sent for Bitbucket, whose tokens are given per repository, and for GitHub, whose
-# tokens are given per organization. The Azure DevOps Server also offers Negotiate and NTLM, which curl would
-# prefer and which fail with a PAT: Basic is sent right away.
-RUN git config --system credential.helper broker && \
-    git config --system credential.https://bitbucket.bit.admin.ch.useHttpPath true && \
-    git config --system credential.https://github.com.useHttpPath true && \
-    git config --system http.https://devops-server.admin.ch.proactiveAuth basic
+# Git tokens from the secret broker: the settings are written at startup by entrypoint.sh into
+# /tmp/gitconfig-broker, only in a container that has a broker (BROKER_URL), so that a container of this image
+# without broker (e.g. a build container) keeps its own Git settings. A missing file is ignored by Git.
+RUN git config --system include.path /tmp/gitconfig-broker
 
 # Per-server authorship, each applied only to repositories whose remote is on that server:
 # - Azure DevOps Server: the person's own agent identity (DEVOPS_COMMIT_NAME/EMAIL, .env)

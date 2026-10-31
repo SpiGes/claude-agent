@@ -119,14 +119,6 @@ _claude_agent()(
 
     touch "$AGENT_USER_FILE" 2>/dev/null || true
 
-    # Secret broker (see README, "Secret broker"): the agent reaches it on the Docker network of the agents. It's
-    # started and unlocked here when a secrets file exists; without it, or when the unlock is cancelled, the
-    # agent starts without any secret of the broker.
-    _claude_network || return
-    if [ -f "$AGENT_VAULT_DIR/secrets.age" ]; then
-        claude_broker || echo "The agent starts without the secrets of the broker (claude_broker unlocks them later)." >&2
-    fi
-
     # Notifications (see README). The agent name applies to every channel; beyond slot 1 it ends with the
     # slot number, since the agents usually work in the same workspace. Speech: when enabled and a speech
     # engine is available on this host, the relay is started (no effect when it's already running) and its
@@ -146,6 +138,15 @@ _claude_agent()(
         else
             echo "Speech notifications disabled: no speech engine found (see README), or set AGENT_NOTIFY_SPEECH=0." >&2
         fi
+    fi
+
+    # Secret broker (see README, "Secret broker"): the agent reaches it on the Docker network of the agents. It's
+    # started and unlocked here when a secrets file exists, after the notifications, so that it gets the speech
+    # queue folder from its first start; without the file, or when the unlock is cancelled, the agent starts
+    # without any secret of the broker.
+    _claude_network || return
+    if [ -f "$AGENT_VAULT_DIR/secrets.age" ]; then
+        claude_broker || echo "The agent starts without the secrets of the broker (claude_broker unlocks them later)." >&2
     fi
 
     # Voice input (/voice, see README): opt-in (AGENT_VOICE_INPUT=1), since every process of the container
@@ -313,9 +314,11 @@ claude_secret(){
 # Creates or changes the secrets file in a disposable container without network: the file is decrypted to a
 # tmpfs, opened with nano, then encrypted again with a passphrase (asked twice) and written back to
 # AGENT_VAULT_DIR. The clear text never reaches the disk of the host. A running broker is then locked and
-# unlocked again, to load the new file.
+# unlocked again, to load the new file. When an existing file is left unchanged, nothing is written nor reloaded
+# (exit code 10 of the container).
 _claude_secret_edit(){
     mkdir -p "$AGENT_VAULT_DIR" && chmod 700 "$AGENT_VAULT_DIR" || return
+    local rc=0
     docker run -it --rm --network none \
       --user $(id -u):$(id -g) \
       --cap-drop ALL --security-opt no-new-privileges \
@@ -328,13 +331,21 @@ _claude_secret_edit(){
         umask 077
         if [ -f /vault/secrets.age ]; then
             age --decrypt --output /work/secrets /vault/secrets.age
+            before="$(sha256sum < /work/secrets)"
         else
             cp /usr/local/share/claude-broker/secrets.example /work/secrets
+            before=""
         fi
         nano /work/secrets
+        if [ "$(sha256sum < /work/secrets)" = "$before" ]; then
+            echo "No change: the secrets file is left as it is."
+            exit 10
+        fi
         age --passphrase --output /vault/secrets.age.new /work/secrets
         mv /vault/secrets.age.new /vault/secrets.age
-        echo "Secrets file saved."' || return
+        echo "Secrets file saved."' || rc=$?
+    [ "$rc" = 10 ] && return 0
+    [ "$rc" = 0 ] || return "$rc"
     if _claude_broker_running; then
         _claude_broker_ctl lock >/dev/null
         claude_broker
