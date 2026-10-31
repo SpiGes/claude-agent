@@ -112,27 +112,30 @@ Created while signed in as the agent account (Settings, Developer settings, Fine
 | Token | Repository permissions | Entry of the secrets file | Group |
 |---|---|---|---|
 | Git token | Contents: Read and write | `GIT_<n>_URL`, `GIT_<n>_USERNAME`, `GIT_<n>_PASSWORD` | `git` |
-| API token | Issues: Read and write, Pull requests: Read and write, Contents: Read-only | `GH_TOKEN` | `gh` |
+| API token | Issues: Read and write, Pull requests: Read and write, Contents: Read-only | `GH_<NAME>_TOKEN`, `GH_<NAME>_OWNER` | `gh` |
+
+A fine-grained token belongs to a single resource owner: an agent working on the repositories of two organizations gets two Git tokens and two API tokens, one pair per organization.
 
 Metadata: Read-only is added by GitHub automatically; every other permission, including Workflows, stays at No access. Without Workflows, a push that creates or changes a file under `.github/workflows/` is rejected, so any CI change goes through a person.
 
 ### Secrets file and `.env` file
 
-In the secrets file (`claude_secret edit`, see "Secret broker"), plain tokens, no base64:
+In the secrets file (`claude_secret edit`, see "Secret broker"), plain tokens, no base64, one pair per organization:
 ```
-GIT_2_URL=https://github.com
+GIT_2_URL=https://github.com/<organization>
 GIT_2_USERNAME=x-access-token
-GIT_2_PASSWORD=<GitHub Git token>
-GH_TOKEN=<GitHub API token>
+GIT_2_PASSWORD=<GitHub Git token of the organization>
+GH_<NAME>_TOKEN=<GitHub API token of the organization>
+GH_<NAME>_OWNER=<organization>
 ```
 In the `.env` file, the two GitHub lines of `.env.example` are uncommented:
 ```
 GITHUB_COMMIT_NAME=<agent name, e.g. Claude Agent (Firstname Lastname)>
 GITHUB_COMMIT_EMAIL=<ID>+<login>@users.noreply.github.com
 ```
-- The Git token is given only for `https://github.com` URLs, so the Azure DevOps token and the GitHub token never reach the wrong server.
+- A Git token is given only for the URLs of its organization (`https://github.com/<organization>/...`, compared without regard to case), so a token never reaches another organization or server. Git sends the path of the repository for GitHub (`credential.https://github.com.useHttpPath`, in the system configuration of the image).
 - `GITHUB_COMMIT_NAME` and `GITHUB_COMMIT_EMAIL` are the authorship of the agent's commits on GitHub, handled like the Azure DevOps pair (see "Installation details"). The email is the agent account's noreply address, shown in its Settings, Emails when "Keep my email addresses private" is enabled; its numeric part is the account's permanent ID, which keeps commits linked to the account even after a rename. GitHub links commits to the account through the email only; the name is displayed as is.
-- `gh` gets `GH_TOKEN` from the broker for each call, through a wrapper (`/usr/local/bin/gh`), with no `gh auth login` needed. `gh` is deliberately not wired into Git (no `gh auth setup-git`), so that Git keeps using its own token only.
+- `gh` gets the API token of the organization from the broker for each call, through a wrapper (`/usr/local/bin/gh`), with no `gh auth login` needed. The wrapper finds the organization in `-R`/`--repo`, `GH_REPO`, a `gh api` path (`repos/<owner>/...`, `orgs/<owner>`), or the `origin` remote of the current repository; without any, the broker answers only when it holds a single API token. `gh` is deliberately not wired into Git (no `gh auth setup-git`), so that Git keeps using its own token only.
 
 ### Check
 
@@ -353,10 +356,11 @@ One `KEY=VALUE` per line, as a docker env file (no quotes, no space around `=`),
 
 | Entry | Meaning |
 |---|---|
-| `GIT_<n>_URL` | `https://` prefix of the remotes the token is for; the longest prefix that matches the URL of a remote wins |
+| `GIT_<n>_URL` | `https://` prefix of the remotes the token is for, compared without regard to case; the longest prefix that matches the URL of a remote wins |
 | `GIT_<n>_PASSWORD`, `GIT_<n>_USERNAME` | Token sent with Basic authentication (Azure DevOps, GitHub); the user name defaults to `token` (`x-access-token` for GitHub) |
 | `GIT_<n>_BEARER` | Token sent as a Bearer token (Bitbucket) |
-| `GH_TOKEN` | GitHub API token of `gh` |
+| `GH_<NAME>_TOKEN`, `GH_<NAME>_OWNER` | GitHub API token of `gh` for one organization or account (e.g. `GH_SPIGES_TOKEN` and `GH_SPIGES_OWNER=SpiGes`) |
+| `GH_TOKEN` | GitHub API token of `gh` for any other owner (optional) |
 
 ### Usage
 
@@ -370,7 +374,7 @@ claude_broker_stop            # stops the broker: secrets forgotten
 
 ### Moving the tokens out of `.env`
 
-For an installation from before the broker: the Git tokens of `.env` (`GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_<n>`, `GIT_CONFIG_VALUE_<n>`) and `GH_TOKEN` are written in the secrets file (`claude_secret edit`), as plain tokens (the `GIT_CONFIG_VALUE_<n>` lines hold them base64-encoded, with a user name for Basic), then removed from `.env`. The `<PREFIX>_COMMIT_NAME` and `<PREFIX>_COMMIT_EMAIL` pairs stay in `.env`. The image is rebuilt (Step 2 of Installation).
+For an installation from before the broker: the Git tokens of `.env` (`GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_<n>`, `GIT_CONFIG_VALUE_<n>`) and `GH_TOKEN` are written in the secrets file (`claude_secret edit`), as plain tokens (the `GIT_CONFIG_VALUE_<n>` lines hold them base64-encoded, with a user name for Basic), then removed from `.env`. A GitHub token gets the URL of its organization (`GIT_<n>_URL`, `GH_<NAME>_OWNER`). The Git operations keep working during the move: the headers of `.env` are sent first, and the broker is asked only when a server refuses them. The `<PREFIX>_COMMIT_NAME` and `<PREFIX>_COMMIT_EMAIL` pairs stay in `.env`. The image is rebuilt (Step 2 of Installation).
 
 ### Limits
 
