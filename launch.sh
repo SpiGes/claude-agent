@@ -17,6 +17,13 @@ export AGENT_VOICE_LANGUAGE="${AGENT_VOICE_LANGUAGE:-french}"
 # Number of agents of one profile that can run at the same time, each in its own slot (see README,
 # "Several agents at the same time").
 export AGENT_MAX_SLOTS="${AGENT_MAX_SLOTS:-3}"
+# Secret broker (see README, "Secret broker"): the Docker network shared by the broker and the agent containers,
+# the folder of the encrypted secrets file, the folder of its log, and the life of an open group.
+export AGENT_NETWORK="${AGENT_NETWORK:-bfs-claude-agent}"
+export AGENT_VAULT_DIR="${AGENT_VAULT_DIR:-$AGENT_HOMES_DIR/vault}"
+export AGENT_BROKER_LOG_DIR="${AGENT_BROKER_LOG_DIR:-$AGENT_HOMES_DIR/broker}"
+export BROKER_IDLE_MINUTES="${BROKER_IDLE_MINUTES:-30}"
+export BROKER_MAX_HOURS="${BROKER_MAX_HOURS:-4}"
 
 # Name that starts each notification of an agent: the name of its workspace folder, or of the folder
 # above it when the workspace is a "branch" folder (e.g. backend/branch gives "backend"). AGENT_NOTIFY_NAME
@@ -112,6 +119,14 @@ _claude_agent()(
 
     touch "$AGENT_USER_FILE" 2>/dev/null || true
 
+    # Secret broker (see README, "Secret broker"): the agent reaches it on the Docker network of the agents. It's
+    # started and unlocked here when a secrets file exists; without it, or when the unlock is cancelled, the
+    # agent starts without any secret of the broker.
+    _claude_network || return
+    if [ -f "$AGENT_VAULT_DIR/secrets.age" ]; then
+        claude_broker || echo "The agent starts without the secrets of the broker (claude_broker unlocks them later)." >&2
+    fi
+
     # Notifications (see README). The agent name applies to every channel; beyond slot 1 it ends with the
     # slot number, since the agents usually work in the same workspace. Speech: when enabled and a speech
     # engine is available on this host, the relay is started (no effect when it's already running) and its
@@ -157,6 +172,8 @@ _claude_agent()(
     # Home: one per slot. Claude Code projects (memory and session transcripts): one folder for every slot of
     # the profile, so that the agents share their memory and a session can be resumed from any slot.
     docker run -it --rm --user $(id -u):$(id -g) \
+      --network "$AGENT_NETWORK" \
+      -e BROKER_URL=http://claude-broker:8080 \
       -e HOME=/root \
       -e AGENT_SLOT="$slot" \
       -e NUGET_PACKAGES=/home/$USER/.nuget/packages \
@@ -186,6 +203,136 @@ claude_dev_bash(){
 
 claude_qualitycheck(){
     _claude_agent qualitycheck claude "$@"
+}
+
+# Docker network of the agent containers and of the secret broker. The broker is reached there by its name,
+# claude-broker; containers outside this network (e.g. a build container) can't reach it.
+_claude_network(){
+    docker network inspect "$AGENT_NETWORK" >/dev/null 2>&1 \
+      || docker network create "$AGENT_NETWORK" >/dev/null \
+      || { echo "Docker network $AGENT_NETWORK can't be created." >&2; return 1; }
+}
+
+_claude_broker_running(){
+    [ "$(docker inspect -f '{{.State.Running}}' claude-broker 2>/dev/null)" = "true" ]
+}
+
+_claude_broker_ctl(){
+    docker exec -i claude-broker claude-broker ctl "$@"
+}
+
+# Starts the secret broker (see README, "Secret broker") unless it's running, then unlocks it unless it's
+# unlocked: the passphrase of the secrets file is asked here, by age inside the broker container, and the
+# decrypted file goes straight to the broker's memory, never to a disk. The broker keeps running between the
+# agent sessions; it's locked again when it restarts (e.g. with Docker Desktop).
+# Hardened: no capability, no privilege escalation, read-only file system; the secrets file is mounted read-only,
+# the workspace isn't mounted at all.
+claude_broker(){
+    if [ ! -f "$AGENT_VAULT_DIR/secrets.age" ]; then
+        echo "No secrets file ($AGENT_VAULT_DIR/secrets.age): create it with claude_secret edit." >&2
+        return 1
+    fi
+    _claude_network || return
+    if ! _claude_broker_running; then
+        docker rm claude-broker >/dev/null 2>&1
+        mkdir -p "$AGENT_BROKER_LOG_DIR" || return
+        local -a notify_args=(-e AGENT_NOTIFY_NAME=courtier)
+        if [ -d "$AGENT_NOTIFY_SPEECH_DIR" ]; then
+            notify_args+=(-v "$AGENT_NOTIFY_SPEECH_DIR:/notifications/speech" -e AGENT_NOTIFY_SPEECH_DIR=/notifications/speech)
+        fi
+        docker run -d --name claude-broker --restart unless-stopped \
+          --network "$AGENT_NETWORK" \
+          --label bfs-claude-agent.role=broker \
+          --user $(id -u):$(id -g) \
+          --cap-drop ALL --security-opt no-new-privileges \
+          --read-only --tmpfs /tmp:mode=1777 \
+          -e PYTHONDONTWRITEBYTECODE=1 \
+          -e BROKER_IDLE_MINUTES -e BROKER_MAX_HOURS \
+          "${notify_args[@]}" \
+          -v "$AGENT_VAULT_DIR:/vault:ro" \
+          -v "$AGENT_BROKER_LOG_DIR:/log" \
+          --entrypoint claude-broker \
+          bfs-claude-agent serve >/dev/null || return
+        # Waits for the service: `ctl unlocked` exits with 3 until it's ready.
+        local i
+        for i in 1 2 3 4 5 6 7 8 9 10; do
+            _claude_broker_ctl unlocked >/dev/null 2>&1; [ $? -le 1 ] && break
+            sleep 0.5
+        done
+    fi
+    _claude_broker_ctl unlocked && return 0
+    echo "Secret broker locked: passphrase of $AGENT_VAULT_DIR/secrets.age."
+    docker exec -it claude-broker bash -c 'set -o pipefail; age --decrypt /vault/secrets.age | claude-broker ctl load'
+}
+
+# Stops the secret broker: the secrets are forgotten, every group is closed.
+claude_broker_stop(){
+    if docker stop claude-broker >/dev/null 2>&1; then
+        docker rm claude-broker >/dev/null 2>&1
+        echo "Secret broker stopped."
+    else
+        echo "Secret broker not running."
+    fi
+}
+
+# Commands of the secret broker (see README, "Secret broker"):
+#   claude_secret allow <group>       opens a group (git, gh)
+#   claude_secret revoke <group>|all  closes a group, or every group
+#   claude_secret status              state of the broker and of each group
+#   claude_secret log [<lines>]       end of the log of the broker (default 30 lines)
+#   claude_secret edit                creates or changes the secrets file, then reloads the broker
+claude_secret(){
+    local action="${1:-}"
+    case "$action" in
+        allow|revoke|status)
+            if ! _claude_broker_running; then
+                echo "Secret broker not running: start it with claude_broker." >&2
+                return 1
+            fi
+            _claude_broker_ctl "$@"
+            ;;
+        log)
+            tail -n "${2:-30}" "$AGENT_BROKER_LOG_DIR/broker.log"
+            ;;
+        edit)
+            _claude_secret_edit
+            ;;
+        *)
+            echo "Usage: claude_secret allow <group> | revoke <group>|all | status | log [<lines>] | edit" >&2
+            return 2
+            ;;
+    esac
+}
+
+# Creates or changes the secrets file in a disposable container without network: the file is decrypted to a
+# tmpfs, opened with nano, then encrypted again with a passphrase (asked twice) and written back to
+# AGENT_VAULT_DIR. The clear text never reaches the disk of the host. A running broker is then locked and
+# unlocked again, to load the new file.
+_claude_secret_edit(){
+    mkdir -p "$AGENT_VAULT_DIR" && chmod 700 "$AGENT_VAULT_DIR" || return
+    docker run -it --rm --network none \
+      --user $(id -u):$(id -g) \
+      --cap-drop ALL --security-opt no-new-privileges \
+      --read-only --tmpfs /work:mode=1777 --tmpfs /tmp:mode=1777 \
+      -e HOME=/tmp \
+      -v "$AGENT_VAULT_DIR:/vault" \
+      --entrypoint bash \
+      bfs-claude-agent -c '
+        set -euo pipefail
+        umask 077
+        if [ -f /vault/secrets.age ]; then
+            age --decrypt --output /work/secrets /vault/secrets.age
+        else
+            cp /usr/local/share/claude-broker/secrets.example /work/secrets
+        fi
+        nano /work/secrets
+        age --passphrase --output /vault/secrets.age.new /work/secrets
+        mv /vault/secrets.age.new /vault/secrets.age
+        echo "Secrets file saved."' || return
+    if _claude_broker_running; then
+        _claude_broker_ctl lock >/dev/null
+        claude_broker
+    fi
 }
 
 # Stops the speech relay of the speech notifications, e.g. to apply a new setting (voice, speaker); the next

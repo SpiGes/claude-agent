@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Wrapper of the GitHub CLI in the agent container (/usr/local/bin/gh, before the real /usr/bin/gh in the PATH):
+# gets the GitHub API token from the secret broker for this call only (see README, "Secret broker"). Without
+# BROKER_URL (e.g. in a build container), the real gh runs as is.
+set -euo pipefail
+
+real_gh=/usr/bin/gh
+if [ -z "${BROKER_URL:-}" ]; then
+    exec "$real_gh" "$@"
+fi
+
+if ! response="$(curl -sS --noproxy '*' --max-time 10 -w '\n%{http_code}' "${BROKER_URL%/}/v1/token/gh" 2>&1)"; then
+    echo "gh: secret broker unreachable at $BROKER_URL ($response): run \`claude_broker\` on the host" >&2
+    exit 1
+fi
+code="${response##*$'\n'}"
+body="${response%$'\n'*}"
+if [ "$code" != "200" ]; then
+    echo "gh: $body" >&2
+    exit 1
+fi
+GH_TOKEN="$body" exec "$real_gh" "$@"

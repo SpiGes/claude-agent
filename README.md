@@ -10,7 +10,7 @@ Before this repository can be used, the following must already be in place:
 
 - Docker Desktop, with WSL2 integration enabled for the Ubuntu distribution (Settings, Resources, WSL Integration).
 - WSL2 (Ubuntu), with the SpiGes repositories already cloned natively inside it (over HTTPS, not SSH), not on Windows (for performance reason).
-- A Personal Access Token dedicated to Git operations against the on-premise Azure DevOps Server, scoped to Code (Read & Write) only — distinct from the read-only `DEVOPS_PAT` used by the Azure DevOps MCP server. See the full setup guide, Chapter 3, for how this token is used on both WSL2 and inside the container.
+- A Personal Access Token dedicated to Git operations against the on-premise Azure DevOps Server, scoped to Code (Read & Write) only — distinct from the read-only `DEVOPS_PAT` used by the Azure DevOps MCP server. See the full setup guide, Chapter 3, for how this token is used on WSL2; for the agent, it's stored in the secrets file of the secret broker (Step 6 below).
 - A Claude.ai account with a subscription, from which the Claude Code token is generated (Step 4 below); a separate API key is not needed.
 - Optional, only for repositories hosted on GitHub: a dedicated GitHub account for the agent, distinct from the person's own account (see "Optional: GitHub access" below).
 - Optional, only for repositories hosted on the Bitbucket Data Center server: a Bitbucket HTTP access token (see "Optional: Bitbucket access" below).
@@ -32,7 +32,7 @@ git clone <url-of-this-repository> ~/.agents/bfs-claude-agent
 ```bash
 docker build -t bfs-claude-agent ~/.agents/bfs-claude-agent
 ```
-Needed again only after a change to the Dockerfile, to `entrypoint.sh`, to `notifications/agent-notify`, to the scripts under `hooks/`, or to the certificates under `certs/`.
+Needed again only after a change to the Dockerfile, to `entrypoint.sh`, to `notifications/agent-notify`, to the scripts under `hooks/` or `broker/`, or to the certificates under `certs/`.
 
 ### 3. Create the personal folders
 
@@ -49,7 +49,6 @@ docker run -it --rm --entrypoint claude bfs-claude-agent setup-token
 ```
 Then, in `~/.claude-agent-homes/.env`, replace the placeholders of:
 - `CLAUDE_CODE_OAUTH_TOKEN`, with the generated token;
-- `GIT_CONFIG_VALUE_0`, with the Azure DevOps Git token from the Prerequisites, base64-encoded as shown in the file;
 - `DEVOPS_COMMIT_NAME` and `DEVOPS_COMMIT_EMAIL`, with the authorship of the agent's commits on the Azure DevOps Server, chosen by each person (e.g. `Claude Agent (Firstname Lastname)` and `firstname.lastname+agent-dev@example.org`).
 
 The GitHub and Bitbucket lines stay commented out unless "Optional: GitHub access" or "Optional: Bitbucket access" below is set up.
@@ -61,20 +60,29 @@ echo 'source ~/.agents/bfs-claude-agent/launch.sh' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-### 6. Start the agent
+### 6. Create the secrets file
+
+```bash
+claude_secret edit
+```
+The Git tokens are written in the secrets file of the secret broker, opened in an editor (see "Secret broker" below for the format): at least the Azure DevOps Git token from the Prerequisites. The file is then encrypted with a passphrase, asked twice.
+
+### 7. Start the agent
 
 ```bash
 cd <repository>
 claude_dev
+claude_secret allow git     # in another WSL2 terminal, when the agent needs Git
 ```
+`claude_dev` starts the secret broker and asks for the passphrase when it's locked.
 
 ### Installation details
 
 - **Personal state and secrets live outside this repository**, in `~/.claude-agent-homes` (`AGENT_HOMES_DIR`). Since the `.env` file is not inside the versioned folder at all, rather than a `.gitignore`-protected file within it, it is not exposed to a broad `git add -A`, or to a backup of the repository folder that does not respect ignore rules. It must never be committed or shared.
 - **The folders of Step 3 are created by hand**, before the first launch, so that Docker does not create them itself with the wrong owner. For the same reason, the folder of a profile (its slots and its `projects` folder, see "Several agents at the same time") and the mount points inside a slot home are created by `launch.sh` before each `docker run`.
-- **Git authenticates through environment variables only** (`GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_<n>`, `GIT_CONFIG_VALUE_<n>`): each entry adds an `Authorization` header for one server only, so the container needs no `.ssh` mount, no private key, and no credential file. They reach the container through `--env-file`, like `CLAUDE_CODE_OAUTH_TOKEN`. The full setup guide (Chapter 3) documents the equivalent, one-time setup for the WSL2 host itself, needed for the person's own `git` operations outside the container.
+- **Git gets its tokens from the secret broker**, through a credential helper (see "Secret broker"), only while the `git` group is open: the agent container has no `.ssh` mount, no private key, no credential file, and no Git token in its environment. The full setup guide (Chapter 3) documents the one-time setup of the WSL2 host itself, needed for the person's own `git` operations outside the container.
 - **`docker --env-file` keeps every character after `=` as is**, trailing spaces and Windows line endings (`\r`) included. A value copied with either of them may break silently.
-- **The commit authorship is set per Git server**, through the same pair of variables for each one: `<PREFIX>_COMMIT_NAME` and `<PREFIX>_COMMIT_EMAIL`, with `DEVOPS` for the Azure DevOps Server, `GITHUB` for GitHub, and `BITBUCKET` for the Bitbucket Data Center server. At startup, `entrypoint.sh` writes each pair into `/tmp/gitconfig-<server>`, which the system Git configuration includes only for repositories whose remote is on that server. The container refuses to start, with an explicit message, when a pair of a server in use is missing, or when a value starts or ends with a space or a Windows line ending. Repositories on any other server keep the default `Claude Agent <claude-agent@spiges.local>` authorship.
+- **The commit authorship is set per Git server**, through the same pair of variables for each one: `<PREFIX>_COMMIT_NAME` and `<PREFIX>_COMMIT_EMAIL`, with `DEVOPS` for the Azure DevOps Server, `GITHUB` for GitHub, and `BITBUCKET` for the Bitbucket Data Center server. At startup, `entrypoint.sh` writes each pair into `/tmp/gitconfig-<server>`, which the system Git configuration includes only for repositories whose remote is on that server. A server is in use when its pair is set (or, in a build container, when one of its `GIT_CONFIG_KEY_<n>` targets it). The container refuses to start, with an explicit message, when a pair of a server in use is incomplete, or when a value starts or ends with a space or a Windows line ending. Repositories on any other server keep the default `Claude Agent <claude-agent@spiges.local>` authorship.
 - **Claude Code updates itself in its own npm prefix**, `/opt/claude-code`: `entrypoint.sh` runs `npm update -g` at each start, and Claude Code also updates itself during a session. `NPM_CONFIG_PREFIX` points npm there, and this folder is the only one installed by the image that the container user can write to; `/usr/local` stays owned by root. Its `bin` folder comes last in the `PATH`. An update lasts until the container stops (`--rm`); the next start updates again.
 - **`claude setup-token` (Step 4) is run with `--entrypoint claude`**, which bypasses `entrypoint.sh`: the token is generated before the `.env` file is filled in, so the authorship checks would otherwise refuse to start.
 - **`launch.sh` is sourced, not copied**, so a plain `git pull` on this repository updates the launch functions at the next shell start. It defines `claude_dev`, `claude_dev_bash`, and `claude_qualitycheck` (see Usage), on top of `_claude_agent`, which runs the container for a given profile.
@@ -101,37 +109,36 @@ Done once by an organization owner:
 
 Created while signed in as the agent account (Settings, Developer settings, Fine-grained tokens), both with the organization as resource owner, an expiration date, and "All repositories" as repository access (the team above restricts it):
 
-| Token | Repository permissions | Variable in the `.env` file |
-|---|---|---|
-| Git token | Contents: Read and write | `GIT_CONFIG_KEY_1` / `GIT_CONFIG_VALUE_1` |
-| API token | Issues: Read and write, Pull requests: Read and write, Contents: Read-only | `GH_TOKEN` |
+| Token | Repository permissions | Entry of the secrets file | Group |
+|---|---|---|---|
+| Git token | Contents: Read and write | `GIT_<n>_URL`, `GIT_<n>_USERNAME`, `GIT_<n>_PASSWORD` | `git` |
+| API token | Issues: Read and write, Pull requests: Read and write, Contents: Read-only | `GH_TOKEN` | `gh` |
 
 Metadata: Read-only is added by GitHub automatically; every other permission, including Workflows, stays at No access. Without Workflows, a push that creates or changes a file under `.github/workflows/` is rejected, so any CI change goes through a person.
 
-### `.env` file
+### Secrets file and `.env` file
 
-The five GitHub lines of `.env.example` are uncommented, and `GIT_CONFIG_COUNT` is raised to 2; with it left at 1, Git silently ignores the GitHub entry:
+In the secrets file (`claude_secret edit`, see "Secret broker"), plain tokens, no base64:
 ```
-GIT_CONFIG_COUNT=2
-GIT_CONFIG_KEY_0=http.https://devops-server.admin.ch.extraHeader
-GIT_CONFIG_VALUE_0=Authorization: Basic <Azure DevOps PAT in base64>
-GIT_CONFIG_KEY_1=http.https://github.com/.extraHeader
-GIT_CONFIG_VALUE_1=Authorization: Basic <GitHub Git token in base64, e.g. via printf 'x-access-token:%s' '<PAT>' | base64 -w0>
+GIT_2_URL=https://github.com
+GIT_2_USERNAME=x-access-token
+GIT_2_PASSWORD=<GitHub Git token>
+GH_TOKEN=<GitHub API token>
+```
+In the `.env` file, the two GitHub lines of `.env.example` are uncommented:
+```
 GITHUB_COMMIT_NAME=<agent name, e.g. Claude Agent (Firstname Lastname)>
 GITHUB_COMMIT_EMAIL=<ID>+<login>@users.noreply.github.com
-GH_TOKEN=<GitHub API token, plain, no base64>
 ```
-- `GIT_CONFIG_VALUE_1` applies only to `https://github.com/` URLs, so the Azure DevOps token and the GitHub token never reach the wrong server.
-- `GITHUB_COMMIT_NAME` and `GITHUB_COMMIT_EMAIL` are the authorship of the agent's commits on GitHub, handled like the Azure DevOps pair (see "Installation details"), and required once the GitHub Git token is enabled. The email is the agent account's noreply address, shown in its Settings, Emails when "Keep my email addresses private" is enabled; its numeric part is the account's permanent ID, which keeps commits linked to the account even after a rename. GitHub links commits to the account through the email only; the name is displayed as is.
-- `GH_TOKEN` is read directly by the GitHub CLI (`gh`), with no `gh auth login` needed. `gh` is deliberately not wired into Git (no `gh auth setup-git`), so that Git keeps using its own token only.
-
-Reading the tokens with `read -rs` and appending them with `printf`, rather than pasting them into an editor, avoids stray spaces and `\r`, and keeps them out of the shell history.
+- The Git token is given only for `https://github.com` URLs, so the Azure DevOps token and the GitHub token never reach the wrong server.
+- `GITHUB_COMMIT_NAME` and `GITHUB_COMMIT_EMAIL` are the authorship of the agent's commits on GitHub, handled like the Azure DevOps pair (see "Installation details"). The email is the agent account's noreply address, shown in its Settings, Emails when "Keep my email addresses private" is enabled; its numeric part is the account's permanent ID, which keeps commits linked to the account even after a rename. GitHub links commits to the account through the email only; the name is displayed as is.
+- `gh` gets `GH_TOKEN` from the broker for each call, through a wrapper (`/usr/local/bin/gh`), with no `gh auth login` needed. `gh` is deliberately not wired into Git (no `gh auth setup-git`), so that Git keeps using its own token only.
 
 ### Check
 
-Once the container is started, from `claude_dev_bash`:
+Once the container is started, with the `git` and `gh` groups open (`claude_secret allow git`, `claude_secret allow gh`), from `claude_dev_bash`:
 ```bash
-gh auth status                                  # agent account, via GH_TOKEN
+gh auth status                                  # agent account, with the token of the broker
 git -C <github-repo> push --dry-run origin HEAD # authenticates with the Git token
 git -C <github-repo> config user.email          # the noreply address
 ```
@@ -153,32 +160,25 @@ Its permission is Repository read, or Repository write when the agent pushes, an
 
 The repositories are cloned over HTTPS (`https://bitbucket.bit.admin.ch/scm/<project>/<repository>.git`), not SSH: the container has no SSH key, and the token is only sent to HTTPS URLs. The URL never holds a user name or a token: they would be stored in clear in `.git/config`.
 
-### `.env` file
+### Secrets file and `.env` file
 
-The four Bitbucket lines of `.env.example` are uncommented, and `GIT_CONFIG_COUNT` is raised by one. With GitHub also enabled:
+In the secrets file (`claude_secret edit`, see "Secret broker"), one entry per token, with the exact URL of the remote for a repository token (`.git` included):
 ```
-GIT_CONFIG_COUNT=3
-GIT_CONFIG_KEY_2=http.https://bitbucket.bit.admin.ch/.extraHeader
-GIT_CONFIG_VALUE_2=Authorization: Bearer <Bitbucket token, plain, no base64>
+GIT_3_URL=https://bitbucket.bit.admin.ch/scm/<project>/<repository>.git
+GIT_3_BEARER=<Bitbucket token>
+```
+In the `.env` file, the two Bitbucket lines of `.env.example` are uncommented:
+```
 BITBUCKET_COMMIT_NAME=<agent name, e.g. Claude Agent (Firstname Lastname)>
 BITBUCKET_COMMIT_EMAIL=<agent email address>
 ```
-- The indexes of `GIT_CONFIG_KEY_<n>` must follow each other from 0: without GitHub, the Bitbucket entry takes index 1 and `GIT_CONFIG_COUNT` is 2.
-- `GIT_CONFIG_VALUE_2` applies only to `https://bitbucket.bit.admin.ch/` URLs, so the Bitbucket token never reaches another server.
-- Bitbucket accepts the token as a Bearer token, so no base64 encoding and no user name are needed, unlike the Basic headers of Azure DevOps and GitHub.
-- `BITBUCKET_COMMIT_NAME` and `BITBUCKET_COMMIT_EMAIL` are the authorship of the agent's commits on Bitbucket, handled like the Azure DevOps pair (see "Installation details"), and required once the Bitbucket Git token is enabled.
-
-The token can be appended with `read -rs` and `printf`, as for GitHub:
-```bash
-read -rs -p 'Bitbucket token: ' bb_token; echo
-printf '%s\n' 'GIT_CONFIG_KEY_2=http.https://bitbucket.bit.admin.ch/.extraHeader' \
-  "GIT_CONFIG_VALUE_2=Authorization: Bearer $bb_token" >> ~/.claude-agent-homes/.env
-unset bb_token
-```
+- The broker gives the token whose URL is the longest prefix of the URL of the remote: a repository token is never sent to another repository, nor to another server. Git sends the path of the repository for Bitbucket only (`credential.https://bitbucket.bit.admin.ch.useHttpPath`, in the system configuration of the image).
+- Bitbucket accepts the token as a Bearer token (`GIT_<n>_BEARER`), so no user name is needed.
+- `BITBUCKET_COMMIT_NAME` and `BITBUCKET_COMMIT_EMAIL` are the authorship of the agent's commits on Bitbucket, handled like the Azure DevOps pair (see "Installation details").
 
 ### Check
 
-Once the container is started, from `claude_dev_bash`:
+Once the container is started, with the `git` group open (`claude_secret allow git`), from `claude_dev_bash`:
 ```bash
 git -C <bitbucket-repo> ls-remote --heads origin        # authenticates with the token
 git -C <bitbucket-repo> push --dry-run origin HEAD      # only with Repository write
@@ -305,6 +305,8 @@ With the voice input enabled, every process of the container can record the micr
 | `claude_qualitycheck` | Starts the agent in review-only mode (qualitycheck profile, read-only, no MCP server) |
 | `claude_notify_speech_stop` | Stops the speech relay of the speech notifications (see "Optional: speech notifications"); the next launch of an agent starts it again |
 | `claude_voice_on` / `claude_voice_off` | Enables or disables the voice input (microphone) for the next launches of an agent (see "Voice input") |
+| `claude_broker` / `claude_broker_stop` | Starts and unlocks the secret broker, or stops it (see "Secret broker"); `claude_dev` starts it when needed |
+| `claude_secret allow <group>` | Opens a group of secrets for the agent (`git`, `gh`); also `revoke <group>\|all`, `status`, `log`, `edit` (see "Secret broker") |
 
 Each command starts a new container, removed on exit (--rm); nothing needs to be stopped or cleaned up by hand. Several agents can run at the same time, see "Several agents at the same time" below.
 
@@ -328,6 +330,53 @@ A certificate that only one person needs, for example the self-signed certificat
 ### A personal preference, shared across every profile
 
 A habit that should apply regardless of which profile is running, for example a keyword that switches a response to technical English, is written once to `$AGENT_USER_FILE` (default `$AGENT_HOMES_DIR/CLAUDE.user.md`), a plain file outside any profile that every profile's `CLAUDE.md` imports automatically. It can be edited directly from the WSL2 host, not only from inside a session.
+
+## Secret broker
+
+The Git tokens and the GitHub API token aren't given to the agent container at startup. They're kept by a secret broker, a container of its own (`claude-broker`), which hands them out only while their group is open. A group is opened by the person, on the host; the agent can't open one.
+
+### How it works
+
+- **Encrypted secrets file**: `$AGENT_VAULT_DIR/secrets.age` (default `~/.claude-agent-homes/vault`), encrypted with `age` and a passphrase. It's decrypted only inside the broker container, into its memory: the clear text never reaches a disk. `claude_broker` asks for the passphrase when the broker is locked; `claude_dev` calls it at each start.
+- **A separate container**: the broker runs from the agent image, with no capability, no privilege escalation, a read-only file system, the secrets file mounted read-only, and neither the workspace nor the NuGet cache mounted. The agent can't read its memory or its environment, and nothing the agent can change runs in it. It keeps running between the agent sessions, and is locked again when it restarts.
+- **Docker network**: the agent containers and the broker share the network `AGENT_NETWORK` (default `bfs-claude-agent`); the agent reaches the broker at `http://claude-broker:8080` (`BROKER_URL`). A container outside this network, e.g. a build container, can't reach it.
+- **Groups**: `git` (the Git tokens) and `gh` (the GitHub API token). A group is opened with `claude_secret allow <group>`, which runs the command in the broker with `docker exec`: the agent container has no access to Docker, so it can't open a group by itself. A group closes `BROKER_IDLE_MINUTES` (default 30) after its last use, and `BROKER_MAX_HOURS` (default 4) after it was opened, whichever comes first. Both can be exported in `~/.bashrc`, and apply at the next start of the broker.
+- **Clients in the agent container**: Git asks the broker through a credential helper (`git-credential-broker`, set as `credential.helper` in the system configuration of the image), only when a server requires authentication; `gh` through a wrapper (`/usr/local/bin/gh`) that gets the token for each call. Without `BROKER_URL`, both leave Git and `gh` as they are.
+- **Refusals**: when the broker is locked or the group is closed, Git and `gh` fail with a message giving the command to run on the host, and a spoken notification is sent ("courtier: Autorisation requise pour git"), at most once every two minutes.
+- **Log**: every request and every command is logged to `$AGENT_BROKER_LOG_DIR/broker.log` (default `~/.claude-agent-homes/broker`), with the URL and the name of the entry, never a secret value.
+
+### Secrets file
+
+Edited with `claude_secret edit`: a disposable container without network decrypts the file to a tmpfs, opens it in `nano`, and encrypts it again with a passphrase (asked twice). The first time, it starts from `broker/secrets.example`. A running broker is then locked and unlocked again with the new file.
+
+One `KEY=VALUE` per line, as a docker env file (no quotes, no space around `=`), plain tokens, no base64:
+
+| Entry | Meaning |
+|---|---|
+| `GIT_<n>_URL` | `https://` prefix of the remotes the token is for; the longest prefix that matches the URL of a remote wins |
+| `GIT_<n>_PASSWORD`, `GIT_<n>_USERNAME` | Token sent with Basic authentication (Azure DevOps, GitHub); the user name defaults to `token` (`x-access-token` for GitHub) |
+| `GIT_<n>_BEARER` | Token sent as a Bearer token (Bitbucket) |
+| `GH_TOKEN` | GitHub API token of `gh` |
+
+### Usage
+
+```bash
+claude_secret allow git       # opens the git group
+claude_secret status          # state of the broker and time left for each group
+claude_secret revoke all      # closes every group
+claude_secret log             # end of the log
+claude_broker_stop            # stops the broker: secrets forgotten
+```
+
+### Moving the tokens out of `.env`
+
+For an installation from before the broker: the Git tokens of `.env` (`GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_<n>`, `GIT_CONFIG_VALUE_<n>`) and `GH_TOKEN` are written in the secrets file (`claude_secret edit`), as plain tokens (the `GIT_CONFIG_VALUE_<n>` lines hold them base64-encoded, with a user name for Basic), then removed from `.env`. The `<PREFIX>_COMMIT_NAME` and `<PREFIX>_COMMIT_EMAIL` pairs stay in `.env`. The image is rebuilt (Step 2 of Installation).
+
+### Limits
+
+- While a group is open, any process of the agent container can ask the broker for its tokens, like Git does: the broker limits how long the tokens are reachable, not who asks within the container.
+- A token given to Git or `gh` is in the memory of that process while it runs.
+- The broker and the secrets file are protected from the agent container, not from a compromised WSL2 or Windows.
 
 ## Several agents at the same time
 
@@ -413,6 +462,11 @@ bfs-claude-agent/
   hooks/
     agent-memory-sync        (copied into the image)
     agent-memory-guard       (copied into the image)
+  broker/                    (copied into the image)
+    claude-broker            (service of the secret broker)
+    git-credential-broker    (Git credential helper of the agent)
+    gh                       (wrapper of the GitHub CLI)
+    secrets.example          (template of the secrets file)
   certs/
     bit-proxy-ca.pem
     nexus-ca.pem
@@ -434,7 +488,8 @@ bfs-claude-agent/
 
 Nothing personal or secret lives inside this repository:
 - `AGENT_HOMES_DIR` (default `$HOME/.claude-agent-homes`), one subfolder per profile, holds Claude Code's own state: `slots/<n>/`, the home of each slot (local configuration, session history), and `projects/`, shared by the slots (memory, session transcripts), see "Several agents at the same time". It also holds a shared `CLAUDE.user.md` at its root (see "A personal preference" above).
-- `AGENT_ENV_FILE` (default `$AGENT_HOMES_DIR/.env`) holds the real Claude Code token, the Git tokens, the commit authorship of each server, and, when GitHub is used, the agent account's GitHub API token; only `.env.example`, with placeholders, is committed here.
+- `AGENT_ENV_FILE` (default `$AGENT_HOMES_DIR/.env`) holds the real Claude Code token and the commit authorship of each server; only `.env.example`, with placeholders, is committed here.
+- `AGENT_VAULT_DIR` (default `$AGENT_HOMES_DIR/vault`) holds the encrypted secrets file of the secret broker (Git tokens, GitHub API token), and `AGENT_BROKER_LOG_DIR` (default `$AGENT_HOMES_DIR/broker`) its log; only `broker/secrets.example` is committed here.
 - `SHARED_BASE_DIR` (default `~/.agents/shared`) holds ad-hoc documents shared with the agent, outside any project repository.
 
 ## Troubleshooting
