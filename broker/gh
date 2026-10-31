@@ -4,8 +4,9 @@
 # BROKER_URL (e.g. in a build container), the real gh runs as is.
 #
 # A token belongs to one organization or account (its resource owner), so the owner the command is about is sent
-# to the broker: from -R/--repo, GH_REPO, a `gh api` path (repos/<owner>/..., orgs/<owner>...), else the origin
-# remote of the current repository. Without any, the broker answers only when it has a single token.
+# to the broker: from -R/--repo, GH_REPO, a GitHub URL or a `gh api` path (repos/<owner>/..., orgs/<owner>...)
+# given as argument, the repository of `gh repo <command> <owner>/<repository>`, else the origin remote of the
+# current repository. Without any, the broker answers only when it has a single token.
 set -euo pipefail
 
 real_gh=/usr/bin/gh
@@ -30,13 +31,19 @@ for ((i = 0; i < ${#args[@]}; i++)); do
         -R|--repo) repo="${args[i+1]:-}" ;;
         -R?*) repo="${args[i]#-R}" ;;
         --repo=*) repo="${args[i]#--repo=}" ;;
+        # A GitHub URL given as argument (repository, pull request, issue), e.g. gh pr view <url>.
+        https://github.com/*/*)
+            [ -n "$api_owner" ] || IFS=/ read -r _ _ _ api_owner _ <<< "${args[i]}"
+            ;;
         repos/*|/repos/*|orgs/*|/orgs/*|users/*|/users/*)
-            if [ -z "$api_owner" ]; then
-                IFS=/ read -r _ api_owner _ <<< "${args[i]#/}"
-            fi
+            [ -n "$api_owner" ] || IFS=/ read -r _ api_owner _ <<< "${args[i]#/}"
             ;;
     esac
 done
+# The repository of `gh repo <command> <owner>/<repository>` (view, clone, fork, ...), given as argument.
+if [ "${args[0]:-}" = "repo" ] && [[ "${args[2]:-}" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
+    [ -n "$api_owner" ] || api_owner="${args[2]%%/*}"
+fi
 owner=""
 if [ -n "$repo" ]; then
     owner="$(repo_owner "$repo")"
