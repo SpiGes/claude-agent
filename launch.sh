@@ -233,6 +233,12 @@ claude_broker(){
         return 1
     fi
     _claude_network || return
+    # A broker started from an older image (the image was rebuilt since) is replaced, so that it runs the
+    # current code; its secrets are forgotten and the passphrase is asked again.
+    if _claude_broker_running && [ "$(docker inspect -f '{{.Image}}' claude-broker)" != "$(docker image inspect -f '{{.Id}}' bfs-claude-agent)" ]; then
+        echo "The image was rebuilt: the secret broker is restarted on the new image."
+        docker stop claude-broker >/dev/null
+    fi
     if ! _claude_broker_running; then
         docker rm claude-broker >/dev/null 2>&1
         mkdir -p "$AGENT_BROKER_LOG_DIR" || return
