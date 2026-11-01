@@ -352,7 +352,7 @@ The Git tokens and the GitHub API token aren't given to the agent container at s
 
 ### Secrets file
 
-Edited with `claude_secret edit`: a disposable container without network decrypts the file to a tmpfs, opens it in `nano`, and encrypts it again with a passphrase (asked twice). The first time, it starts from `broker/secrets.example`. A running broker is then locked and unlocked again with the new file.
+Edited with `claude_secret edit`: a disposable container without network decrypts the file to a tmpfs, opens it in `nano`, and encrypts it again with the same passphrase. The passphrase is asked once, on the host (twice for a new file), and handed to `age` through pipes only (`age-passphrase`, since `age` reads a passphrase from a terminal only); a running broker is then reloaded with the new file, without asking it again. The first time, it starts from `broker/secrets.example`. The container ends by itself after 30 minutes, so that an interrupted edit doesn't leave the clear text in its tmpfs.
 
 One `KEY=VALUE` per line, as a docker env file (no quotes, no space around `=`), plain tokens, no base64:
 

@@ -602,45 +602,74 @@ _claude_secret_on(){
     if [ "$service" = broker ]; then _claude_broker_ctl "$@"; else _claude_gateway_ctl "$@"; fi
 }
 
-# Creates or changes the secrets file in a disposable container without network: the file is decrypted to a
-# tmpfs, opened with nano, then encrypted again with a passphrase (asked twice) and written back to
-# AGENT_VAULT_DIR. The clear text never reaches the disk of the host. A running broker is then locked and
-# unlocked again, to load the new file. When an existing file is left unchanged, nothing is written nor reloaded
-# (exit code 10 of the container).
+# Creates or changes the secrets file in a disposable container without network: the file is decrypted to a tmpfs,
+# opened with nano, then encrypted again and written back to AGENT_VAULT_DIR. The clear text never reaches the disk
+# of the host. The passphrase is asked once, on the host (twice for a new file), and handed to age through pipes only
+# (age-passphrase): no file, no variable of a container. It serves the decryption, the encryption, and the reload of a
+# running broker. When an existing file is left unchanged, nothing is written nor reloaded.
 _claude_secret_edit(){
     mkdir -p "$AGENT_VAULT_DIR" && chmod 700 "$AGENT_VAULT_DIR" || return
-    local rc=0
-    docker run -it --rm --network none \
+    local passphrase confirmation
+    if [ -f "$AGENT_VAULT_DIR/secrets.age" ]; then
+        read -rsp "Passphrase of $AGENT_VAULT_DIR/secrets.age: " passphrase; echo
+    else
+        read -rsp "New passphrase of the secrets file: " passphrase; echo
+        read -rsp "Same passphrase again: " confirmation; echo
+        if [ "$passphrase" != "$confirmation" ]; then
+            echo "The two passphrases differ: nothing is written." >&2
+            return 1
+        fi
+    fi
+    if [ -z "$passphrase" ]; then
+        echo "Empty passphrase: nothing is written." >&2
+        return 1
+    fi
+    # The container only sleeps; each step runs in it with docker exec. It ends by itself after 30 minutes, so that the
+    # clear text of its tmpfs doesn't outlive an interrupted edit, and it's removed at the end of the edit.
+    local container="claude-secret-edit-$$" rc=0
+    docker run -d --rm --name "$container" --network none \
       --user $(id -u):$(id -g) \
       --cap-drop ALL --security-opt no-new-privileges \
       --read-only --tmpfs /work:mode=1777 --tmpfs /tmp:mode=1777 \
       -e HOME=/tmp \
       -v "$AGENT_VAULT_DIR:/vault" \
-      --entrypoint bash \
-      bfs-claude-agent -c '
-        set -euo pipefail
-        umask 077
-        if [ -f /vault/secrets.age ]; then
-            age --decrypt --output /work/secrets /vault/secrets.age
-            before="$(sha256sum < /work/secrets)"
-        else
-            cp /usr/local/share/claude-broker/secrets.example /work/secrets
-            before=""
-        fi
-        nano /work/secrets
-        if [ "$(sha256sum < /work/secrets)" = "$before" ]; then
-            echo "No change: the secrets file is left as it is."
-            exit 10
-        fi
-        age --passphrase --output /vault/secrets.age.new /work/secrets
-        mv /vault/secrets.age.new /vault/secrets.age
-        echo "Secrets file saved."' || rc=$?
-    [ "$rc" = 10 ] && return 0
-    [ "$rc" = 0 ] || return "$rc"
-    if _claude_broker_running; then
-        _claude_broker_ctl lock >/dev/null
-        claude_broker
+      --entrypoint sleep \
+      bfs-claude-agent 1800 >/dev/null || return
+    (
+        trap 'docker stop -t 0 "$container" >/dev/null 2>&1' EXIT
+        _claude_secret_edit_steps "$container" "$passphrase"
+    ) || rc=$?
+    if [ "$rc" = 10 ]; then
+        echo "No change: the secrets file is left as it is."
+        return 0
     fi
+    [ "$rc" = 0 ] || return "$rc"
+    echo "Secrets file saved."
+    if _claude_broker_running; then
+        printf '%s\n' "$passphrase" | docker exec -i claude-broker bash -c \
+          'set -o pipefail; age-passphrase --decrypt /vault/secrets.age | claude-broker ctl load'
+    fi
+}
+
+# Steps of claude_secret edit in its container: decryption, nano, encryption. Exit code 10 when the file is left
+# unchanged.
+_claude_secret_edit_steps(){
+    local container="$1" passphrase="$2" before=""
+    if docker exec "$container" test -f /vault/secrets.age; then
+        printf '%s\n' "$passphrase" | docker exec -i "$container" sh -c \
+          'umask 077; age-passphrase --decrypt --output /work/secrets /vault/secrets.age' || return
+        before="$(docker exec "$container" sha256sum /work/secrets)" || return
+    else
+        docker exec "$container" sh -c 'umask 077; cp /usr/local/share/claude-broker/secrets.example /work/secrets' \
+          || return
+    fi
+    docker exec -it "$container" nano /work/secrets || return
+    [ "$(docker exec "$container" sha256sum /work/secrets)" = "$before" ] && return 10
+    printf '%s\n' "$passphrase" | docker exec -i "$container" sh -c \
+      'set -e
+       umask 077
+       age-passphrase --passphrase --output /vault/secrets.age.new /work/secrets
+       mv /vault/secrets.age.new /vault/secrets.age' || return
 }
 
 # Stops the speech relay of the speech notifications, e.g. to apply a new setting (voice, speaker); the next
