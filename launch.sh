@@ -358,14 +358,15 @@ claude_gateway_stop(){
     fi
 }
 
-# MCP servers moved out of the agent container (see README, "MCP gateway"): command line, settings, and the secret
-# of type 2 that the server gets from the secret broker. Printed as three lines.
+# MCP servers moved out of the agent container (see README, "MCP gateway"): command line, settings, the secret of
+# type 2 that the server gets from the secret broker, and the port it listens on. Printed as four lines.
 _claude_mcp_spec(){
     case "$1" in
         devops)
             echo "mcp-devops-onpremise --transport streamable-http --host 0.0.0.0 --port 8000"
             echo "DEVOPS_API_URL=https://devops-server.admin.ch/DefaultCollection/BFS_SIS"
             echo "DEVOPS_PAT"
+            echo "8000"
             ;;
         *)
             echo "Unknown MCP server '$1' (servers: devops)." >&2
@@ -389,7 +390,7 @@ claude_mcp(){
     fi
     local -a spec
     mapfile -t spec < <(_claude_mcp_spec "$name") || return
-    [ "${#spec[@]}" = 3 ] || return 1
+    [ "${#spec[@]}" = 4 ] || return 1
     local container="claude-mcp-$name"
     if [ "$action" != start ] || _claude_outdated "$container"; then
         if docker stop "$container" >/dev/null 2>&1; then
@@ -439,7 +440,30 @@ claude_mcp(){
         docker stop "$container" >/dev/null 2>&1; docker rm "$container" >/dev/null 2>&1
         return 1
     fi
+    _claude_mcp_wait "$container" "${spec[3]}" || return
     echo "MCP server $name started."
+}
+
+# Waits until the MCP server of a container accepts connections on its port (at most a minute), so that an agent
+# started right after claude_mcp start finds it ready. The check runs inside the container (docker exec), since the
+# host doesn't reach the internal network of the MCP containers.
+_claude_mcp_wait(){
+    local container="$1" port="$2" i
+    local probe='import socket, sys
+try:
+    socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=1).close()
+except OSError:
+    sys.exit(1)'
+    for i in $(seq 60); do
+        if ! _claude_running "$container"; then
+            echo "The MCP server in $container stopped while starting: see docker logs $container." >&2
+            return 1
+        fi
+        docker exec "$container" python3 -c "$probe" "$port" 2>/dev/null && return 0
+        sleep 1
+    done
+    echo "The MCP server in $container doesn't accept connections after a minute: see docker logs $container." >&2
+    return 1
 }
 
 # Commands of the secret broker and of the MCP gateway (see README, "Secret broker", "MCP gateway"):

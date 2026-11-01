@@ -311,7 +311,7 @@ With the voice input enabled, every process of the container can record the micr
 | `claude_broker` / `claude_broker_stop` | Starts and unlocks the secret broker, or stops it (see "Secret broker"); `claude_dev` starts it when needed |
 | `claude_secret allow <group>` | Opens a group: `git`, `gh` (secret broker), `devops` (MCP gateway); also `revoke <group>\|all`, `status`, `pending`, `approve`, `deny`, `log`, `edit` (see "Secret broker", "MCP gateway") |
 | `claude_gateway` / `claude_gateway_stop` | Starts or stops the MCP gateway (see "MCP gateway") |
-| `claude_mcp start\|stop\|restart devops` | Starts, stops, or restarts the container of the Azure DevOps MCP server, with its token from the secret broker (see "MCP gateway") |
+| `claude_mcp start\|stop\|restart devops` | Starts, stops, or restarts the container of the Azure DevOps MCP server, with its token from the secret broker; `start` returns once the server accepts connections (see "MCP gateway") |
 
 Each command starts a new container, removed on exit (--rm); nothing needs to be stopped or cleaned up by hand. Several agents can run at the same time, see "Several agents at the same time" below.
 
