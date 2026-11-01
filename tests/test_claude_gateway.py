@@ -24,6 +24,7 @@ from claude_gateway import (
     Route,
     Settings,
     ToolCall,
+    agent_name,
     details,
     parse_routes,
     run_admin_command,
@@ -45,7 +46,7 @@ def tool_call(tool: str, call_id: int = 7, **arguments: object) -> dict[str, obj
 
 
 def write_call(tool: str = "devops_work_item_update", summary: str = "") -> ToolCall:
-    return ToolCall("devops", "DevOps", tool, summary, "{}")
+    return ToolCall("devops", "DevOps", tool, summary, "{}", "agent dev 2")
 
 
 TOOLS_LIST: dict[str, object] = {
@@ -224,6 +225,28 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(parse_routes(" , "), ())
 
 
+class AgentNameTest(unittest.TestCase):
+    def test_name_of_the_container(self) -> None:
+        for host, expected in (
+            ("claude-agent-dev-2.bfs-claude-agent", "agent dev 2"),
+            ("claude-agent-qualitycheck-1", "agent qualitycheck 1"),
+            ("cb52821ed763.bfs-claude-agent", "an unknown agent (172.21.0.4)"),
+            ("claude-agent-dev-x.bfs-claude-agent", "an unknown agent (172.21.0.4)"),
+        ):
+            with self.subTest(host=host):
+
+                def resolve(_: str, host: str = host) -> tuple[str, list[str], list[str]]:
+                    return host, [], []
+
+                self.assertEqual(agent_name("172.21.0.4", resolve), expected)
+
+    def test_address_without_name(self) -> None:
+        def no_name(address: str) -> tuple[str, list[str], list[str]]:
+            raise socket.herror(1, f"no name for {address}")
+
+        self.assertEqual(agent_name("172.21.0.9", no_name), "an unknown agent (172.21.0.9)")
+
+
 class SummarizeTest(unittest.TestCase):
     def test_summary(self) -> None:
         self.assertEqual(
@@ -274,7 +297,7 @@ class ApprovalsTest(GatewayTestCase):
         thread = self.decide_soon(self.gateway)
         self.assertEqual(self.gateway.approvals.request(write_call(summary="id=1")), (True, "approved"))
         thread.join()
-        self.assertEqual(self.notifications, ["Écriture DevOps à approuver : devops_work_item_update"])
+        self.assertEqual(self.notifications, ["Écriture DevOps à approuver pour agent dev 2 : devops_work_item_update"])
 
     def test_deny(self) -> None:
         thread = self.decide_soon(self.gateway, "1", approve=False)
@@ -305,7 +328,7 @@ class ApprovalsTest(GatewayTestCase):
         blocked.start()
         while not self.gateway.approvals.pending_lines():
             threading.Event().wait(0.01)
-        self.assertEqual(self.gateway.approvals.pending_lines(), ["  1: DevOps devops_work_item_update"])
+        self.assertEqual(self.gateway.approvals.pending_lines(), ["  1: agent dev 2, DevOps devops_work_item_update"])
         for args, approve, expected in (
             (["9"], True, "no waiting call 9 \\(waiting: 1\\)"),
             (["x"], True, "invalid argument 'x'"),
@@ -423,10 +446,11 @@ class AdminCommandTest(GatewayTestCase):
         while not self.gateway.approvals.pending_lines():
             threading.Event().wait(0.01)
         status = run_admin_command(self.gateway, {"command": "status"})[1]
-        self.assertIn("Waiting calls:\n  1: DevOps devops_work_item_update (work_item_id=3)", status)
+        self.assertIn("Waiting calls:\n  1: an unknown agent, DevOps devops_work_item_update (work_item_id=3)", status)
         self.assertEqual(
             run_admin_command(self.gateway, {"command": "pending"})[1],
-            '  1: DevOps devops_work_item_update (work_item_id=3)\n      {\n        "work_item_id": 3\n      }',
+            "  1: an unknown agent, DevOps devops_work_item_update (work_item_id=3)\n"
+            '      {\n        "work_item_id": 3\n      }',
         )
         ok, message = run_admin_command(self.gateway, {"command": "approve", "args": ["--tool", "5m"]})
         self.assertEqual(

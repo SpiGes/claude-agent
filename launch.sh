@@ -180,9 +180,15 @@ _claude_agent()(
         fi
     fi
 
+    # Name of the container: one per profile and slot (the slot lock makes it unique). The MCP gateway finds it from
+    # the address of a call (Docker DNS), to tell the person which agent asks for a write. A stopped container left
+    # with this name (e.g. after a crash of Docker) is removed; a running one isn't (docker rm without -f).
+    local name="claude-agent-$profile-$slot"
+    docker rm "$name" >/dev/null 2>&1
+
     # Home: one per slot. Claude Code projects (memory and session transcripts): one folder for every slot of
     # the profile, so that the agents share their memory and a session can be resumed from any slot.
-    docker run -it --rm --user $(id -u):$(id -g) \
+    docker run -it --rm --name "$name" --user $(id -u):$(id -g) \
       --network "$AGENT_NETWORK" \
       -e BROKER_URL=http://claude-broker:8080 \
       -e HOME=/root \

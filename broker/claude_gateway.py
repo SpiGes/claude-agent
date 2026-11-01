@@ -75,6 +75,9 @@ SUMMARY_MAX_VALUE_LENGTH: Final = 60
 # Arguments of a waiting write call shown by `pending`, in full up to this length: the person sees what is written.
 DETAILS_MAX_LENGTH: Final = 4000
 TOOL_ALLOWANCE_PATTERN: Final = re.compile(r"(\d{1,3})m")
+# Container of an agent, named claude-agent-<profile>-<slot> by launch.sh; Docker DNS adds the network to the name.
+AGENT_CONTAINER_PATTERN: Final = re.compile(r"claude-agent-([a-z0-9]+)-(\d+)(?:\.|$)")
+UNKNOWN_AGENT: Final = "an unknown agent"
 
 LOGGER: Final = logging.getLogger("claude-gateway")
 
@@ -320,6 +323,24 @@ def _filtered_json(data: bytes, policy: Policy) -> bytes | None:
     return json.dumps(message, ensure_ascii=False).encode("utf-8")
 
 
+def agent_name(address: str, resolve: Callable[[str], tuple[str, list[str], list[str]]] = socket.gethostbyaddr) -> str:
+    """Return the name of the agent at an address of the Docker network, e.g. `agent dev 2`, from its container name.
+
+    Several agents (slots) share the gateway: the name tells the person which one asks for a write.
+    """
+    try:
+        host = resolve(address)[0]
+    except OSError:
+        return f"{UNKNOWN_AGENT} ({address})"
+    match = AGENT_CONTAINER_PATTERN.match(host)
+    return f"agent {match[1]} {match[2]}" if match else f"{UNKNOWN_AGENT} ({address})"
+
+
+def json_rpc_method(message: object) -> object:
+    """Return the method of a JSON-RPC message, or None."""
+    return cast("dict[str, object]", message).get("method") if isinstance(message, dict) else None
+
+
 def summarize(arguments: object) -> str:
     """Return the main arguments of a tool call (identifiers, short values), for the approval and the log."""
     if not isinstance(arguments, dict):
@@ -359,13 +380,14 @@ def details(arguments: object) -> str:
 
 @dataclass(frozen=True, slots=True)
 class ToolCall:
-    """A write tool call, as shown to the person: group and label of its route, tool, and arguments."""
+    """A write tool call, as shown to the person: group and label of its route, tool, arguments, and calling agent."""
 
     group: str
     label: str
     tool: str
     summary: str
     details: str
+    agent: str = UNKNOWN_AGENT
 
 
 @dataclass(slots=True)
@@ -380,7 +402,7 @@ class PendingCall:
     def describe(self) -> str:
         """Return the line shown by `status`."""
         summary = f" ({self.call.summary})" if self.call.summary else ""
-        return f"  {self.number}: {self.call.label} {self.call.tool}{summary}"
+        return f"  {self.number}: {self.call.agent}, {self.call.label} {self.call.tool}{summary}"
 
     def describe_in_full(self) -> str:
         """Return the lines shown by `pending`: the line of `status`, then the full arguments."""
@@ -415,8 +437,8 @@ class Approvals:
                 return True, "approved for the tool"
             pending = PendingCall(next(self._numbers), call)
             self._pending[pending.number] = pending
-        LOGGER.info("call %s waiting: %s %s (%s)", pending.number, call.label, call.tool, call.summary)
-        self._notifier(f"Écriture {call.label} à approuver : {call.tool}")
+        LOGGER.info("call %s waiting: %s, %s %s (%s)", pending.number, call.agent, call.label, call.tool, call.summary)
+        self._notifier(f"Écriture {call.label} à approuver pour {call.agent} : {call.tool}")
         pending.decided.wait(self._timeout_seconds)
         # The decision is read under the lock that `decide` holds: a decision made just after the wait timed out, but
         # before the call left the list, still counts, so that the person is never told the opposite of what happens.
@@ -505,8 +527,8 @@ class Gateway:
         self.approvals.forget_group(group)
         LOGGER.info("group %s closed (%s)", group, reason)
 
-    def check(self, route: Route, request: object) -> str | None:
-        """Decide on an MCP request: None to forward it, or the reason of the refusal of a tool call."""
+    def check(self, route: Route, request: object, agent: str = UNKNOWN_AGENT) -> str | None:
+        """Decide on an MCP request of an agent: None to forward it, or the reason of the refusal of a tool call."""
         if not isinstance(request, dict):
             return "a single JSON-RPC message is expected"
         message = cast("dict[str, object]", request)
@@ -520,11 +542,13 @@ class Gateway:
         arguments = params_map.get("arguments")
         summary = summarize(arguments)
         kind = route.policy.classify(tool)
-        refusal = self._refusal(route, tool, kind, arguments, summary)
-        LOGGER.info("%s %s %s (%s): %s", route.name, kind, tool, summary, refusal or "allowed")
+        refusal = self._refusal(route, tool, kind, arguments, summary=summary, agent=agent)
+        LOGGER.info("%s %s %s (%s) by %s: %s", route.name, kind, tool, summary, agent, refusal or "allowed")
         return refusal
 
-    def _refusal(self, route: Route, tool: str, kind: str, arguments: object, summary: str) -> str | None:
+    def _refusal(  # noqa: PLR0913  # the facts of one tool call, logged by the caller too
+        self, route: Route, tool: str, kind: str, arguments: object, *, summary: str, agent: str
+    ) -> str | None:
         if kind == "denied":
             return f"the tool {tool} is refused by the MCP gateway"
         try:
@@ -534,7 +558,8 @@ class Gateway:
         if kind == "read":
             return None
         policy = route.policy
-        approved, how = self.approvals.request(ToolCall(policy.group, policy.label, tool, summary, details(arguments)))
+        call = ToolCall(policy.group, policy.label, tool, summary, details(arguments), agent)
+        approved, how = self.approvals.request(call)
         if approved:
             return None
         if how == "denied":
@@ -632,11 +657,12 @@ class GatewayHandler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             self._reply_text(HTTPStatus.BAD_REQUEST, "invalid JSON")
             return
-        refusal = self._gateway.check(route, request)
+        method = json_rpc_method(request)
+        agent = agent_name(self.client_address[0]) if method == "tools/call" else UNKNOWN_AGENT
+        refusal = self._gateway.check(route, request, agent)
         if refusal is not None:
             self._reply_tool_error(request, refusal)
             return
-        method = cast("dict[str, object]", request).get("method") if isinstance(request, dict) else None
         if method == "tools/call" and self._client_gone():
             # e.g. a write approved after the agent gave the call up (Esc in Claude Code): never run unknown to it.
             LOGGER.info("%s call not forwarded: the agent closed its connection while the call was waiting", route.name)
