@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Wrapper of the GitHub CLI in the agent container (/usr/local/bin/gh, before the real /usr/bin/gh in the PATH):
+# gets the GitHub API token from the secret broker for this call only (see README, "Secret broker"). Without
+# BROKER_URL (e.g. in a build container), the real gh runs as is.
+#
+# A token belongs to one organization or account (its resource owner), so the owner the command is about is sent
+# to the broker: from -R/--repo, GH_REPO, a GitHub URL or a `gh api` path (repos/<owner>/..., orgs/<owner>...)
+# given as argument, the repository of `gh repo <command> <owner>/<repository>`, else the origin remote of the
+# current repository. Without any, the broker answers only when it has a single token.
+set -euo pipefail
+
+real_gh=/usr/bin/gh
+if [ -z "${BROKER_URL:-}" ]; then
+    exec "$real_gh" "$@"
+fi
+# Commands that don't call the API run without a token.
+case "${1:-}" in
+    ""|-h|--help|help|--version|version|completion) exec "$real_gh" "$@" ;;
+esac
+
+# Owner of a repository given as owner/repo, host/owner/repo, or a URL.
+repo_owner(){
+    local repo="${1#*://}"
+    repo="${repo%/}"
+    repo="${repo%.git}"
+    local -a parts
+    IFS=/ read -r -a parts <<< "$repo"
+    [ "${#parts[@]}" -ge 2 ] && echo "${parts[${#parts[@]}-2]}"
+}
+
+repo="${GH_REPO:-}" api_owner=""
+args=("$@")
+for ((i = 0; i < ${#args[@]}; i++)); do
+    case "${args[i]}" in
+        -R|--repo) repo="${args[i+1]:-}" ;;
+        -R?*) repo="${args[i]#-R}" ;;
+        --repo=*) repo="${args[i]#--repo=}" ;;
+        # A GitHub URL given as argument (repository, pull request, issue), e.g. gh pr view <url>.
+        https://github.com/*/*)
+            [ -n "$api_owner" ] || IFS=/ read -r _ _ _ api_owner _ <<< "${args[i]}"
+            ;;
+        repos/*|/repos/*|orgs/*|/orgs/*|users/*|/users/*)
+            [ -n "$api_owner" ] || IFS=/ read -r _ api_owner _ <<< "${args[i]#/}"
+            ;;
+    esac
+done
+# The repository of `gh repo <command> <owner>/<repository>` (view, clone, fork, ...), given as argument.
+if [ "${args[0]:-}" = "repo" ] && [[ "${args[2]:-}" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
+    [ -n "$api_owner" ] || api_owner="${args[2]%%/*}"
+fi
+owner=""
+if [ -n "$repo" ]; then
+    owner="$(repo_owner "$repo")"
+elif [ -n "$api_owner" ]; then
+    owner="$api_owner"
+else
+    owner="$(git remote get-url origin 2>/dev/null | sed -nE 's#^(https://([^@/]+@)?|git@)github\.com[:/]([^/]+)/.*#\3#p' || true)"
+fi
+owner="${owner%%[?#]*}"
+
+if ! response="$(curl -sS --noproxy '*' --max-time 10 -w '\n%{http_code}' -G \
+        --data-urlencode "owner=$owner" "${BROKER_URL%/}/v1/token/gh" 2>&1)"; then
+    echo "gh: secret broker unreachable at $BROKER_URL ($response): run \`claude_broker\` on the host" >&2
+    exit 1
+fi
+code="${response##*$'\n'}"
+body="${response%$'\n'*}"
+if [ "$code" != "200" ]; then
+    echo "gh: $body" >&2
+    exit 1
+fi
+GH_TOKEN="$body" exec "$real_gh" "$@"

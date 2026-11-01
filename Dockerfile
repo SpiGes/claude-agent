@@ -35,6 +35,11 @@ RUN apt-get update \
         python3-yaml \
         # Installs Python CLI applications in isolated virtual environments (see pipx installs below).
         pipx \
+        # File encryption with a passphrase, for the secrets file of the secret broker (broker/, see README,
+        # "Secret broker"). Only the passphrase mode is used, no plugin.
+        age \
+        # Text editor, used by `claude_secret edit` to change the secrets file inside a disposable container.
+        nano \
         # Fast text search (`rg`), preferred default for plain-text search.
         ripgrep \
         # Fast file search (`fd`), installed as `fdfind` on Ubuntu, aliased below.
@@ -223,6 +228,15 @@ RUN chmod +x /usr/local/bin/agent-notify
 COPY hooks/agent-memory-sync hooks/agent-memory-guard /usr/local/bin/
 RUN chmod +x /usr/local/bin/agent-memory-sync /usr/local/bin/agent-memory-guard
 
+# Secret broker (see broker/ and README, "Secret broker"): the service of the claude-broker container, and its
+# clients in the agent container, a Git credential helper and a wrapper of gh placed before /usr/bin/gh in the
+# PATH. Without BROKER_URL (e.g. in a build container), both clients leave Git and gh as they are.
+COPY broker/claude_broker.py /usr/local/bin/claude-broker
+COPY broker/git_credential_broker.py /usr/local/bin/git-credential-broker
+COPY broker/gh /usr/local/bin/gh
+COPY broker/secrets.example /usr/local/share/claude-broker/secrets.example
+RUN chmod +x /usr/local/bin/claude-broker /usr/local/bin/git-credential-broker /usr/local/bin/gh
+
 # Container entrypoint script.
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
@@ -246,6 +260,11 @@ RUN git config --system --add safe.directory /backend && \
     git config --system worktree.useRelativePaths true && \
     git config --system user.name "Claude Agent" && \
     git config --system user.email "claude-agent@spiges.local"
+
+# Git tokens from the secret broker: the settings are written at startup by entrypoint.sh into
+# /tmp/gitconfig-broker, only in a container that has a broker (BROKER_URL), so that a container of this image
+# without broker (e.g. a build container) keeps its own Git settings. A missing file is ignored by Git.
+RUN git config --system include.path /tmp/gitconfig-broker
 
 # Per-server authorship, each applied only to repositories whose remote is on that server:
 # - Azure DevOps Server: the person's own agent identity (DEVOPS_COMMIT_NAME/EMAIL, .env)

@@ -1,0 +1,45 @@
+# Checks of the Python code before each commit; installed with "pre-commit install" (see README.md, "Development").
+# The hooks run in environments created by pre-commit: keep the versions in line with requirements-dev.txt.
+repos:
+  - repo: local
+    hooks:
+      - id: black
+        name: black
+        entry: black
+        language: python
+        additional_dependencies: [black==26.10.1]
+        types: [python]
+      - id: ruff
+        name: ruff
+        entry: ruff check
+        language: python
+        additional_dependencies: [ruff==0.17.1]
+        types: [python]
+      - id: mypy
+        name: mypy
+        entry: mypy
+        language: python
+        additional_dependencies: [mypy==2.4.0]
+        files: ^((broker|tests)/.*\.py|pyproject\.toml)$
+        pass_filenames: false
+      - id: pyright
+        name: pyright (same checks as Pylance in VS Code)
+        entry: pyright
+        language: python
+        additional_dependencies: [pyright==1.1.414]
+        files: ^((broker|tests)/.*\.py|pyproject\.toml)$
+        pass_filenames: false
+      - id: bandit
+        name: bandit
+        entry: bandit -q -c pyproject.toml -r broker
+        language: python
+        additional_dependencies: [bandit==1.9.4]
+        files: ^(broker/.*\.py|pyproject\.toml)$
+        pass_filenames: false
+      - id: pytest
+        name: pytest
+        entry: pytest -q
+        language: python
+        additional_dependencies: [pytest==9.1.1, pytest-cov==7.1.0, coverage==7.16.2]
+        files: ^((broker|tests)/.*\.py|pyproject\.toml)$
+        pass_filenames: false

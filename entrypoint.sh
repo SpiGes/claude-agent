@@ -31,23 +31,38 @@ configure_authorship(){
     git config --file "$file" user.email "$email"
 }
 
-# True when one of the GIT_CONFIG_KEY_<n> entries (.env) targets the given URL prefix.
+# True when the server is used: one of the GIT_CONFIG_KEY_<n> entries (env file of a build container) targets
+# its URL prefix, or its authorship pair (<PREFIX>_COMMIT_NAME/EMAIL) is set, as in the agent container, whose
+# Git tokens come from the secret broker.
 git_server_enabled(){
-    local i key
+    local url="$1" prefix="$2" i key name_var="${2}_COMMIT_NAME" email_var="${2}_COMMIT_EMAIL"
+    [ -n "${!name_var:-}${!email_var:-}" ] && return 0
     for ((i = 0; i < ${GIT_CONFIG_COUNT:-0}; i++)); do
         key="GIT_CONFIG_KEY_$i"
-        [[ "${!key}" == "http.$1"* ]] && return 0
+        [[ "${!key}" == "http.$url"* ]] && return 0
     done
     return 1
 }
 
-# The Azure DevOps Server is always used; GitHub and Bitbucket only once their Git token is configured.
+# The Azure DevOps Server is always used; GitHub and Bitbucket only when they're used (see above).
 configure_authorship DEVOPS /tmp/gitconfig-devops
-if git_server_enabled https://github.com/; then
+if git_server_enabled https://github.com/ GITHUB; then
     configure_authorship GITHUB /tmp/gitconfig-github
 fi
-if git_server_enabled https://bitbucket.bit.admin.ch/; then
+if git_server_enabled https://bitbucket.bit.admin.ch/ BITBUCKET; then
     configure_authorship BITBUCKET /tmp/gitconfig-bitbucket
+fi
+
+# Git tokens from the secret broker (see README, "Secret broker"), only in a container that has one (BROKER_URL,
+# set by launch.sh for the agent containers); the file is included by the system Git configuration. Git asks the
+# broker through git-credential-broker; the path of the repository is sent for Bitbucket, whose tokens are given
+# per repository, and for GitHub, whose tokens are given per organization. The Azure DevOps Server also offers
+# Negotiate and NTLM, which curl would prefer and which fail with a PAT: Basic is sent right away.
+if [ -n "${BROKER_URL:-}" ]; then
+    git config --file /tmp/gitconfig-broker credential.helper broker
+    git config --file /tmp/gitconfig-broker credential.https://bitbucket.bit.admin.ch.useHttpPath true
+    git config --file /tmp/gitconfig-broker credential.https://github.com.useHttpPath true
+    git config --file /tmp/gitconfig-broker http.https://devops-server.admin.ch.proactiveAuth basic
 fi
 
 # Personal CA certificates, from the folder given by EXTRA_CA_CERTS_DIR (.env), e.g. the self-signed
