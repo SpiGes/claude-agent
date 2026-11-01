@@ -527,6 +527,20 @@ class HttpTest(GatewayTestCase):
                 self.assertEqual(response.status, status)
                 connection.close()
 
+    def test_error_before_the_body_closes_the_connection(self) -> None:
+        """The next request on a kept-alive connection isn't read from the unread body of a refused one."""
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        self.addCleanup(connection.close)
+        connection.request("POST", "/mcp/unknown", body=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize"}))
+        response = connection.getresponse()
+        self.assertEqual((response.status, response.read()), (404, b"unknown path"))
+        self.assertEqual(response.getheader("Connection"), "close")
+        # http.client opens a new connection, as an MCP client does after Connection: close.
+        connection.request("POST", "/mcp/devops", body=json.dumps({"jsonrpc": "2.0", "id": 2, "method": "initialize"}))
+        response = connection.getresponse()
+        response.read()
+        self.assertEqual(response.status, 200)
+
     def test_unreachable_mcp_server(self) -> None:
         route = Route("devops", "http://127.0.0.1:1/mcp", DEVOPS_POLICY)
         gateway = self.make_gateway(route, approval_seconds=5)

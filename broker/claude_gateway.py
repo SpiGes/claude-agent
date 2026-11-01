@@ -619,10 +619,10 @@ class GatewayHandler(BaseHTTPRequestHandler):
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
-            self._reply_text(HTTPStatus.BAD_REQUEST, "invalid Content-Length")
+            self._reply_before_body(HTTPStatus.BAD_REQUEST, "invalid Content-Length")
             return
         if not 0 <= length <= MAX_REQUEST_BYTES:
-            self._reply_text(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "request too large")
+            self._reply_before_body(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "request too large")
             return
         body = self.rfile.read(length)
         try:
@@ -657,7 +657,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         name = self.path.removeprefix("/mcp/").split("?", 1)[0]
         route = self._gateway.routes.get(name) if self.path.startswith("/mcp/") else None
         if route is None:
-            self._reply_text(HTTPStatus.NOT_FOUND, "unknown path")
+            self._reply_before_body(HTTPStatus.NOT_FOUND, "unknown path")
         return route
 
     def _forward(self, route: Route, body: bytes | None, *, filter_tools: bool = False) -> None:
@@ -728,8 +728,19 @@ class GatewayHandler(BaseHTTPRequestHandler):
     def _reply_text(self, status: HTTPStatus, text: str) -> None:
         self._reply(status, "text/plain; charset=utf-8", text.encode("utf-8"))
 
-    def _reply(self, status: HTTPStatus, content_type: str, data: bytes) -> None:
+    def _reply_before_body(self, status: HTTPStatus, text: str) -> None:
+        """Reply without reading the body of the request, then close the connection.
+
+        On a kept-alive connection, the unread body would be read as the start of the next request (400 "Bad request
+        syntax" instead of this answer).
+        """
+        self.close_connection = True
+        self._reply(status, "text/plain; charset=utf-8", text.encode("utf-8"), close=True)
+
+    def _reply(self, status: HTTPStatus, content_type: str, data: bytes, *, close: bool = False) -> None:
         self.send_response(status)
+        if close:
+            self.send_header("Connection", "close")
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
