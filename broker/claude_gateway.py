@@ -12,19 +12,20 @@ calls (`tools/call`):
   host (claude_secret approve), or it's refused after GATEWAY_APPROVAL_SECONDS
 
 The other requests (initialize, notifications, tools/list, the GET stream, DELETE) always go through, so that Claude
-Code lists the tools from its start. The gateway holds no secret: the tokens are in the MCP containers.
+Code lists the tools from its start; the tools refused by the policy are removed from the answer of tools/list. The
+gateway holds no secret: the tokens are in the MCP containers.
 
 Installed in the image as /usr/local/bin/claude-gateway. Usage:
     claude-gateway serve                                   runs the service (command of the container)
     claude-gateway ctl allow <group>                       opens a group
     claude-gateway ctl revoke <group>|all                  closes a group, or every group
     claude-gateway ctl status                              prints the state of each group and the waiting calls
-    claude-gateway ctl pending                             lists the waiting calls
+    claude-gateway ctl pending                             lists the waiting calls, with their full arguments
     claude-gateway ctl approve [<id>] [--tool <minutes>m]  approves a waiting call (the oldest without id); with
                                                            --tool, also the next calls of the same tool for a while
     claude-gateway ctl deny [<id>]                         refuses a waiting call (the oldest without id)
 
-Every tool call is logged to GATEWAY_LOG, never with a secret value.
+Every tool call is logged to GATEWAY_LOG with its main arguments only (no content, no secret value).
 """
 
 import http.client
@@ -65,6 +66,8 @@ RESPONSE_HEADERS: Final = ("Content-Type", "Mcp-Session-Id", "Cache-Control")
 SUMMARY_SKIPPED_KEYS: Final = frozenset({"content", "text", "body", "description", "comment", "value", "patch"})
 SUMMARY_MAX_LENGTH: Final = 160
 SUMMARY_MAX_VALUE_LENGTH: Final = 60
+# Arguments of a waiting write call shown by `pending`, in full up to this length: the person sees what is written.
+DETAILS_MAX_LENGTH: Final = 4000
 TOOL_ALLOWANCE_PATTERN: Final = re.compile(r"(\d{1,3})m")
 
 LOGGER: Final = logging.getLogger("claude-gateway")
@@ -174,6 +177,45 @@ def parse_routes(text: str) -> tuple[Route, ...]:
     return tuple(routes)
 
 
+def without_denied_tools(body: bytes, content_type: str, policy: Policy) -> bytes:
+    """Remove the tools refused by the policy from an answer to tools/list, JSON or server-sent events.
+
+    Only a convenience (the agent doesn't try tools that would be refused): a body that can't be read is returned as it
+    is, the calls of these tools are refused anyway.
+    """
+    if content_type.startswith("application/json"):
+        return _filtered_json(body, policy) or body
+    if not content_type.startswith("text/event-stream"):
+        return body
+    lines = body.decode("utf-8", errors="replace").splitlines(keepends=True)
+    for index, line in enumerate(lines):
+        if line.startswith("data:"):
+            ending = line[len(line.rstrip("\r\n")) :]
+            filtered = _filtered_json(line[len("data:") :].strip().encode("utf-8"), policy)
+            if filtered is not None:
+                lines[index] = "data: " + filtered.decode("utf-8") + ending
+    return "".join(lines).encode("utf-8")
+
+
+def _filtered_json(data: bytes, policy: Policy) -> bytes | None:
+    try:
+        message: object = json.loads(data)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    result = cast("dict[str, object]", message).get("result") if isinstance(message, dict) else None
+    tools = cast("dict[str, object]", result).get("tools") if isinstance(result, dict) else None
+    if not isinstance(tools, list):
+        return None
+    cast("dict[str, object]", result)["tools"] = [
+        tool
+        for tool in cast("list[object]", tools)
+        if not (
+            isinstance(tool, dict) and policy.classify(str(cast("dict[str, object]", tool).get("name"))) == "denied"
+        )
+    ]
+    return json.dumps(message, ensure_ascii=False).encode("utf-8")
+
+
 def summarize(arguments: object) -> str:
     """Return the main arguments of a tool call (identifiers, short values), for the approval and the log."""
     if not isinstance(arguments, dict):
@@ -190,20 +232,43 @@ def summarize(arguments: object) -> str:
     return summary if len(summary) <= SUMMARY_MAX_LENGTH else summary[: SUMMARY_MAX_LENGTH - 1] + "…"
 
 
+def details(arguments: object) -> str:
+    """Return the full arguments of a tool call, indented, for the approval on the host (never logged)."""
+    text = json.dumps(arguments, ensure_ascii=False, indent=2, sort_keys=True)
+    if len(text) > DETAILS_MAX_LENGTH:
+        text = text[:DETAILS_MAX_LENGTH] + f"\n… (cut, {len(text)} characters in all)"
+    return text
+
+
+@dataclass(frozen=True, slots=True)
+class ToolCall:
+    """A write tool call, as shown to the person: group and label of its route, tool, and arguments."""
+
+    group: str
+    label: str
+    tool: str
+    summary: str
+    details: str
+
+
 @dataclass(slots=True)
 class PendingCall:
     """A write tool call waiting for the decision of the person."""
 
     number: int
-    label: str
-    tool: str
-    summary: str
+    call: ToolCall
     decided: threading.Event = field(default_factory=threading.Event)
     approved: bool = False
 
     def describe(self) -> str:
-        """Return the line shown by `pending` and `status`."""
-        return f"  {self.number}: {self.label} {self.tool}" + (f" ({self.summary})" if self.summary else "")
+        """Return the line shown by `status`."""
+        summary = f" ({self.call.summary})" if self.call.summary else ""
+        return f"  {self.number}: {self.call.label} {self.call.tool}{summary}"
+
+    def describe_in_full(self) -> str:
+        """Return the lines shown by `pending`: the line of `status`, then the full arguments."""
+        arguments = "\n".join(f"      {line}" for line in self.call.details.splitlines())
+        return f"{self.describe()}\n{arguments}"
 
 
 class Approvals:
@@ -217,28 +282,39 @@ class Approvals:
         self._lock = threading.Lock()
         self._numbers = itertools.count(1)
         self._pending: dict[int, PendingCall] = {}
-        self._allowed_until: dict[str, float] = {}
+        # Tools approved for a while (`approve --tool`), by group and tool.
+        self._allowed_until: dict[tuple[str, str], float] = {}
 
     @property
     def timeout_seconds(self) -> float:
         """Return the time given to approve a write call."""
         return self._timeout_seconds
 
-    def request(self, label: str, tool: str, summary: str) -> tuple[bool, str]:
+    def request(self, call: ToolCall) -> tuple[bool, str]:
         """Wait for the decision on a write call; return whether it's approved, and how."""
+        key = (call.group, call.tool)
         with self._lock:
-            if self._clock() < self._allowed_until.get(tool, float("-inf")):
+            if self._clock() < self._allowed_until.get(key, float("-inf")):
                 return True, "approved for the tool"
-            call = PendingCall(next(self._numbers), label, tool, summary)
-            self._pending[call.number] = call
-        LOGGER.info("call %s waiting: %s %s (%s)", call.number, label, tool, summary)
-        self._notifier(f"Écriture {label} à approuver : {tool}")
-        decided = call.decided.wait(self._timeout_seconds)
+            pending = PendingCall(next(self._numbers), call)
+            self._pending[pending.number] = pending
+        LOGGER.info("call %s waiting: %s %s (%s)", pending.number, call.label, call.tool, call.summary)
+        self._notifier(f"Écriture {call.label} à approuver : {call.tool}")
+        pending.decided.wait(self._timeout_seconds)
+        # The decision is read under the lock that `decide` holds: a decision made just after the wait timed out, but
+        # before the call left the list, still counts, so that the person is never told the opposite of what happens.
         with self._lock:
-            self._pending.pop(call.number, None)
+            self._pending.pop(pending.number, None)
+            decided, approved = pending.decided.is_set(), pending.approved
         if not decided:
             return False, "no approval in time"
-        return call.approved, "approved" if call.approved else "denied"
+        return approved, "approved" if approved else "denied"
+
+    def forget_group(self, group: str) -> None:
+        """Remove the tools approved for a while (`approve --tool`) of a group, e.g. when it closes."""
+        with self._lock:
+            for key in [key for key in self._allowed_until if key[0] == group]:
+                del self._allowed_until[key]
 
     def decide(self, args: Sequence[str], *, approve: bool) -> str:
         """Approve or deny a waiting call: `[<id>]`, plus `[--tool <minutes>m]` for an approval."""
@@ -249,21 +325,23 @@ class Approvals:
                 raise ValueError(message)
             if number is None:
                 number = min(self._pending)
-            call = self._pending.get(number)
-            if call is None:
+            pending = self._pending.get(number)
+            if pending is None:
                 message = f"no waiting call {number} (waiting: {', '.join(map(str, sorted(self._pending)))})"
                 raise ValueError(message)
-            call.approved = approve
+            pending.approved = approve
+            pending.decided.set()
+            tool = pending.call.tool
             if minutes is not None:
-                self._allowed_until[call.tool] = self._clock() + minutes * 60
-        call.decided.set()
-        LOGGER.info("call %s %s%s", number, "approved" if approve else "denied", _for_minutes(minutes, call.tool))
-        return f"Call {number} {'approved' if approve else 'denied'}: {call.tool}{_for_minutes(minutes, call.tool)}"
+                self._allowed_until[pending.call.group, tool] = self._clock() + minutes * 60
+        LOGGER.info("call %s %s%s", number, "approved" if approve else "denied", _for_minutes(minutes, tool))
+        return f"Call {number} {'approved' if approve else 'denied'}: {tool}{_for_minutes(minutes, tool)}"
 
-    def pending_lines(self) -> list[str]:
-        """Return one line per waiting call, the oldest first."""
+    def pending_lines(self, *, in_full: bool = False) -> list[str]:
+        """Return the waiting calls, the oldest first: one line each, or with their full arguments."""
         with self._lock:
-            return [self._pending[number].describe() for number in sorted(self._pending)]
+            calls = [self._pending[number] for number in sorted(self._pending)]
+        return [call.describe_in_full() if in_full else call.describe() for call in calls]
 
 
 def _decision_arguments(args: Sequence[str], *, allow_tool: bool) -> tuple[int | None, int | None]:
@@ -301,9 +379,14 @@ class Gateway:
             max_seconds=settings.max_seconds,
             clock=clock,
             notifier=notify,
-            on_close=lambda group, reason: LOGGER.info("group %s closed (%s)", group, reason),
+            on_close=self._on_close,
         )
         self.approvals = Approvals(settings.approval_seconds, clock, notify)
+
+    def _on_close(self, group: str, reason: str) -> None:
+        # A closed group also loses its tools approved for a while: reopening it doesn't bring them back.
+        self.approvals.forget_group(group)
+        LOGGER.info("group %s closed (%s)", group, reason)
 
     def check(self, route: Route, request: object) -> str | None:
         """Decide on an MCP request: None to forward it, or the reason of the refusal of a tool call."""
@@ -317,13 +400,14 @@ class Gateway:
         tool = params_map.get("name")
         if not isinstance(tool, str) or not tool:
             return "invalid tool call: no tool name"
-        summary = summarize(params_map.get("arguments"))
+        arguments = params_map.get("arguments")
+        summary = summarize(arguments)
         kind = route.policy.classify(tool)
-        refusal = self._refusal(route, tool, summary, kind)
+        refusal = self._refusal(route, tool, kind, arguments, summary)
         LOGGER.info("%s %s %s (%s): %s", route.name, kind, tool, summary, refusal or "allowed")
         return refusal
 
-    def _refusal(self, route: Route, tool: str, summary: str, kind: str) -> str | None:
+    def _refusal(self, route: Route, tool: str, kind: str, arguments: object, summary: str) -> str | None:
         if kind == "denied":
             return f"the tool {tool} is refused by the MCP gateway"
         try:
@@ -332,7 +416,8 @@ class Gateway:
             return str(error)
         if kind == "read":
             return None
-        approved, how = self.approvals.request(route.policy.label, tool, summary)
+        policy = route.policy
+        approved, how = self.approvals.request(ToolCall(policy.group, policy.label, tool, summary, details(arguments)))
         if approved:
             return None
         if how == "denied":
@@ -350,8 +435,8 @@ class Gateway:
         return "\n".join(lines)
 
     def pending(self) -> str:
-        """Return the waiting calls."""
-        return "\n".join(self.approvals.pending_lines()) or "No waiting call."
+        """Return the waiting calls, with their full arguments."""
+        return "\n".join(self.approvals.pending_lines(in_full=True)) or "No waiting call."
 
     def allow(self, group: str) -> str:
         """Open a group."""
@@ -434,7 +519,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
         if refusal is not None:
             self._reply_tool_error(request, refusal)
             return
-        self._forward(route, body)
+        lists_tools = isinstance(request, dict) and cast("dict[str, object]", request).get("method") == "tools/list"
+        self._forward(route, body, filter_tools=lists_tools)
 
     def do_GET(self) -> None:
         """Forward the stream of the server (server-sent events)."""
@@ -459,7 +545,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._reply_text(HTTPStatus.NOT_FOUND, "unknown path")
         return route
 
-    def _forward(self, route: Route, body: bytes | None) -> None:
+    def _forward(self, route: Route, body: bytes | None, *, filter_tools: bool = False) -> None:
         upstream = urlsplit(route.upstream)
         headers = {name: value for name in REQUEST_HEADERS if (value := self.headers.get(name)) is not None}
         connection = http.client.HTTPConnection(upstream.hostname or "", upstream.port or 80)
@@ -472,7 +558,10 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._reply_text(HTTPStatus.BAD_GATEWAY, message)
             return
         try:
-            self._relay(response)
+            if filter_tools:
+                self._relay_tools(response, route.policy)
+            else:
+                self._relay(response)
         except OSError:
             # The agent closed the connection, e.g. at the end of a GET stream.
             self.close_connection = True
@@ -498,6 +587,19 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self.wfile.write(f"{len(chunk):x}\r\n".encode("ascii") + chunk + b"\r\n")
             self.wfile.flush()
         self.wfile.write(b"0\r\n\r\n")
+
+    def _relay_tools(self, response: http.client.HTTPResponse, policy: Policy) -> None:
+        # An answer to tools/list is short and ends with the answer (also as server-sent events): it's read in full,
+        # then sent without the tools refused by the policy.
+        content_type = response.getheader("Content-Type") or ""
+        data = without_denied_tools(response.read(), content_type, policy)
+        self.send_response(response.status)
+        for name in RESPONSE_HEADERS:
+            if (value := response.getheader(name)) is not None:
+                self.send_header(name, value)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
 
     def _reply_tool_error(self, request: object, reason: str) -> None:
         request_id = cast("dict[str, object]", request).get("id") if isinstance(request, dict) else None

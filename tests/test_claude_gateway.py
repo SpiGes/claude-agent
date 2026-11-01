@@ -19,9 +19,12 @@ from claude_gateway import (
     GatewayHTTPServer,
     Route,
     Settings,
+    ToolCall,
+    details,
     parse_routes,
     run_admin_command,
     summarize,
+    without_denied_tools,
 )
 
 
@@ -35,6 +38,19 @@ class FakeClock:
 
 def tool_call(tool: str, call_id: int = 7, **arguments: object) -> dict[str, object]:
     return {"jsonrpc": "2.0", "id": call_id, "method": "tools/call", "params": {"name": tool, "arguments": arguments}}
+
+
+def write_call(tool: str = "devops_work_item_update", summary: str = "") -> ToolCall:
+    return ToolCall("devops", "DevOps", tool, summary, "{}")
+
+
+TOOLS_LIST: dict[str, object] = {
+    "jsonrpc": "2.0",
+    "id": 2,
+    "result": {
+        "tools": [{"name": "devops_work_item_get"}, {"name": "devops_work_item_delete"}, {"name": "devops_wiki_x"}]
+    },
+}
 
 
 class FakeMcp(BaseHTTPRequestHandler):
@@ -57,6 +73,12 @@ class FakeMcp(BaseHTTPRequestHandler):
             return
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
+        if '"tools/list"' in body:
+            self.send_header("Transfer-Encoding", "chunked")
+            self.end_headers()
+            self._chunk(b"event: message\r\ndata: " + json.dumps(TOOLS_LIST).encode() + b"\r\n\r\n")
+            self.wfile.write(b"0\r\n\r\n")
+            return
         self.send_header("Mcp-Session-Id", "session-1")
         self.send_header("X-Internal", "not forwarded")
         self.send_header("Transfer-Encoding", "chunked")
@@ -165,44 +187,64 @@ class SummarizeTest(unittest.TestCase):
         self.assertLessEqual(len(summarize({f"k{n}": "v" * 50 for n in range(10)})), 160)
         self.assertEqual(summarize({"title": "two\nlines"}), "title=two lines")
 
+    def test_details(self) -> None:
+        self.assertEqual(details({"text": "é", "id": 1}), '{\n  "id": 1,\n  "text": "é"\n}')
+        long_text = details({"text": "x" * 5000})
+        self.assertTrue(long_text.endswith("characters in all)"))
+        self.assertLess(len(long_text), 4100)
+
+    def test_without_denied_tools(self) -> None:
+        expected = [{"name": "devops_work_item_get"}]
+        as_json = without_denied_tools(json.dumps(TOOLS_LIST).encode(), "application/json", DEVOPS_POLICY)
+        self.assertEqual(json.loads(as_json)["result"]["tools"], expected)
+        event = b"event: message\ndata: " + json.dumps(TOOLS_LIST).encode() + b"\n\n"
+        lines = without_denied_tools(event, "text/event-stream", DEVOPS_POLICY).decode().split("\n")
+        self.assertEqual(lines[0], "event: message")
+        self.assertEqual(json.loads(lines[1].removeprefix("data: "))["result"]["tools"], expected)
+        self.assertEqual(lines[2:], ["", ""])
+        for body, content_type in (
+            (b"not json", "application/json"),
+            (b'{"result": {}}', "application/json"),
+            (b"data: not json\n\n", "text/event-stream"),
+            (json.dumps(TOOLS_LIST).encode(), "text/plain"),
+        ):
+            with self.subTest(body=body, content_type=content_type):
+                self.assertEqual(without_denied_tools(body, content_type, DEVOPS_POLICY), body)
+
 
 class ApprovalsTest(GatewayTestCase):
     def test_approve_the_oldest_call(self) -> None:
         thread = self.decide_soon(self.gateway)
-        self.assertEqual(
-            self.gateway.approvals.request("DevOps", "devops_work_item_update", "id=1"), (True, "approved")
-        )
+        self.assertEqual(self.gateway.approvals.request(write_call(summary="id=1")), (True, "approved"))
         thread.join()
         self.assertEqual(self.notifications, ["Écriture DevOps à approuver : devops_work_item_update"])
 
     def test_deny(self) -> None:
         thread = self.decide_soon(self.gateway, "1", approve=False)
-        self.assertEqual(self.gateway.approvals.request("DevOps", "devops_work_item_update", ""), (False, "denied"))
+        self.assertEqual(self.gateway.approvals.request(write_call()), (False, "denied"))
         thread.join()
 
     def test_timeout(self) -> None:
         approvals = Approvals(0.05, self.clock, self.notifications.append)
-        self.assertEqual(approvals.request("DevOps", "devops_work_item_update", ""), (False, "no approval in time"))
+        self.assertEqual(approvals.request(write_call()), (False, "no approval in time"))
         self.assertEqual(approvals.pending_lines(), [])
 
     def test_approval_for_the_tool(self) -> None:
         thread = self.decide_soon(self.gateway, "--tool", "5m")
-        self.assertTrue(self.gateway.approvals.request("DevOps", "devops_pull_request_create_comment", "")[0])
+        self.assertTrue(self.gateway.approvals.request(write_call("devops_pull_request_create_comment"))[0])
         thread.join()
         self.assertEqual(
-            self.gateway.approvals.request("DevOps", "devops_pull_request_create_comment", ""),
+            self.gateway.approvals.request(write_call("devops_pull_request_create_comment")),
             (True, "approved for the tool"),
         )
         self.clock.now += 5 * 60
         approvals_timeout = Approvals(0.05, self.clock, self.notifications.append)
-        self.assertFalse(approvals_timeout.request("DevOps", "devops_pull_request_create_comment", "")[0])
+        self.assertFalse(approvals_timeout.request(write_call("devops_pull_request_create_comment"))[0])
 
     def test_decision_errors(self) -> None:
         with self.assertRaisesRegex(ValueError, "no call is waiting"):
             self.gateway.approvals.decide([], approve=True)
-        blocked = threading.Thread(
-            target=self.gateway.approvals.request, args=("DevOps", "devops_work_item_update", ""), daemon=True
-        )
+        blocked = threading.Thread(target=self.gateway.approvals.request, args=(write_call(),), daemon=True)
         blocked.start()
         while not self.gateway.approvals.pending_lines():
             threading.Event().wait(0.01)
@@ -218,6 +260,27 @@ class ApprovalsTest(GatewayTestCase):
                 self.gateway.approvals.decide(args, approve=approve)
         self.gateway.approvals.decide(["1"], approve=False)
         blocked.join()
+
+    def test_decision_just_after_the_timeout_counts(self) -> None:
+        # The person approves while the wait times out: the call is approved, as the person was told.
+        def approve_at_once(_: str) -> None:
+            approvals.decide([], approve=True)
+
+        approvals = Approvals(5, self.clock, approve_at_once)
+        with mock.patch.object(threading.Event, "wait", return_value=False):
+            self.assertEqual(approvals.request(write_call()), (True, "approved"))
+
+    def test_closing_the_group_forgets_the_tools_approved(self) -> None:
+        self.gateway.allow("devops")
+        thread = self.decide_soon(self.gateway, "--tool", "5m")
+        self.assertIsNone(self.gateway.check(self.route, tool_call("devops_work_item_update", work_item_id=1)))
+        thread.join()
+        self.gateway.revoke("devops")
+        self.gateway.allow("devops")
+        thread = self.decide_soon(self.gateway, approve=False)
+        refusal = self.gateway.check(self.route, tool_call("devops_work_item_update", work_item_id=1))
+        thread.join()
+        self.assertEqual(refusal, "the write call devops_work_item_update was denied on the host")
 
 
 class CheckTest(GatewayTestCase):
@@ -297,7 +360,7 @@ class AdminCommandTest(GatewayTestCase):
         self.assertIn("Waiting calls:\n  1: DevOps devops_work_item_update (work_item_id=3)", status)
         self.assertEqual(
             run_admin_command(self.gateway, {"command": "pending"})[1],
-            "  1: DevOps devops_work_item_update (work_item_id=3)",
+            '  1: DevOps devops_work_item_update (work_item_id=3)\n      {\n        "work_item_id": 3\n      }',
         )
         ok, message = run_admin_command(self.gateway, {"command": "approve", "args": ["--tool", "5m"]})
         self.assertEqual(
@@ -373,6 +436,14 @@ class HttpTest(GatewayTestCase):
         FakeMcp.release.set()
         response = self.post(tool_call("devops_work_item_get", work_item_id=1))
         self.assertEqual(response.read(), b"event: message\ndata: first\n\nevent: message\ndata: second\n\n")
+
+    def test_tools_list_without_denied_tools(self) -> None:
+        response = self.post({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+        self.assertEqual(response.status, 200)
+        data = response.read().decode()
+        self.assertEqual(response.getheader("Content-Length"), str(len(data.encode())))
+        message = json.loads(data.split("\r\n")[1].removeprefix("data: "))
+        self.assertEqual(message["result"]["tools"], [{"name": "devops_work_item_get"}])
 
     def test_errors(self) -> None:
         connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)

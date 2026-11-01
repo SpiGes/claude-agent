@@ -24,10 +24,10 @@ export AGENT_VAULT_DIR="${AGENT_VAULT_DIR:-$AGENT_HOMES_DIR/vault}"
 export AGENT_BROKER_LOG_DIR="${AGENT_BROKER_LOG_DIR:-$AGENT_HOMES_DIR/broker}"
 export BROKER_IDLE_MINUTES="${BROKER_IDLE_MINUTES:-30}"
 export BROKER_MAX_HOURS="${BROKER_MAX_HOURS:-4}"
-# MCP gateway (see README, "MCP gateway"): the internal Docker network of the MCP containers, which only the gateway
-# joins, the folder of its log, and the time given to approve a write call. Its groups use the idle and maximum
-# times of the broker.
-export AGENT_MCP_NETWORK="${AGENT_MCP_NETWORK:-bfs-claude-agent-mcp}"
+# MCP gateway (see README, "MCP gateway"): the prefix of the Docker networks of the MCP servers (one network per
+# server, <prefix>-<server>, joined by its container and the gateway only), the folder of its log, and the time given
+# to approve a write call. Its groups use the idle and maximum times of the broker.
+export AGENT_MCP_NETWORK_PREFIX="${AGENT_MCP_NETWORK_PREFIX:-bfs-claude-agent-mcp}"
 export AGENT_GATEWAY_LOG_DIR="${AGENT_GATEWAY_LOG_DIR:-$AGENT_HOMES_DIR/gateway}"
 export GATEWAY_APPROVAL_SECONDS="${GATEWAY_APPROVAL_SECONDS:-120}"
 
@@ -288,12 +288,22 @@ claude_broker_stop(){
     fi
 }
 
-# Docker network of the MCP containers (see README, "MCP gateway"): internal, joined by the gateway only, so that
-# the agent can't reach an MCP container directly.
+# Docker network of one MCP server (see README, "MCP gateway"), printed: its only members are the container of the
+# server and the gateway. Docker isolates networks from each other, so neither the agent, nor another MCP container,
+# nor a container started without --network (default network) reaches the server, which has no authentication of
+# its own. Not internal: the server reaches its remote service through it.
 _claude_mcp_network(){
-    docker network inspect "$AGENT_MCP_NETWORK" >/dev/null 2>&1 \
-      || docker network create --internal "$AGENT_MCP_NETWORK" >/dev/null \
-      || { echo "Docker network $AGENT_MCP_NETWORK can't be created." >&2; return 1; }
+    local network="$AGENT_MCP_NETWORK_PREFIX-$1"
+    docker network inspect "$network" >/dev/null 2>&1 \
+      || docker network create --label bfs-claude-agent.role=mcp-network "$network" >/dev/null \
+      || { echo "Docker network $network can't be created." >&2; return 1; }
+    echo "$network"
+}
+
+# Connects the gateway to the network of an MCP server, unless it's already connected.
+_claude_gateway_join(){
+    docker inspect -f '{{json .NetworkSettings.Networks}}' claude-gateway | grep -q "\"$1\"" \
+      || docker network connect "$1" claude-gateway
 }
 
 _claude_running(){
@@ -311,11 +321,12 @@ _claude_gateway_ctl(){
 }
 
 # Starts the MCP gateway (see README, "MCP gateway") unless it's running: on the network of the agents, which reach
-# it at http://claude-gateway:8090/mcp/<name>, and on the internal network of the MCP containers. It holds no secret:
+# it at http://claude-gateway:8090/mcp/<name>, and on the network of each MCP server created so far (claude_mcp
+# connects it to the networks created later). It holds no secret:
 # its groups (devops) and the waiting write calls are lost when it restarts, every group is then closed. It doesn't
 # start the MCP containers (claude_mcp), nor is it started by claude_dev.
 claude_gateway(){
-    _claude_network && _claude_mcp_network || return
+    _claude_network || return
     if _claude_outdated claude-gateway; then
         echo "The image was rebuilt: the MCP gateway is restarted on the new image."
         docker stop claude-gateway >/dev/null
@@ -344,7 +355,10 @@ claude_gateway(){
       -v "$AGENT_GATEWAY_LOG_DIR:/log" \
       --entrypoint claude-gateway \
       bfs-claude-agent serve >/dev/null || return
-    docker network connect "$AGENT_MCP_NETWORK" claude-gateway || return
+    local network
+    for network in $(docker network ls --filter label=bfs-claude-agent.role=mcp-network --format '{{.Name}}'); do
+        _claude_gateway_join "$network" || return
+    done
     echo "MCP gateway started."
 }
 
@@ -377,8 +391,8 @@ _claude_mcp_spec(){
 
 # Starts, stops, or restarts the container of an MCP server (see README, "MCP gateway"):
 #   claude_mcp start|stop|restart <server>   (servers: devops)
-# The container starts without its token, on the internal network of the MCP containers (and on the default network,
-# to reach its server). Its token is then read from the secret broker (ctl export, through docker exec) and written
+# The container starts without its token, on the network of the server, shared with the gateway only (connected to it
+# when it runs). Its token is then read from the secret broker (ctl export, through docker exec) and written
 # straight into the tmpfs of the container, through a pipe between two docker exec: no variable, no file on the host,
 # nothing in the configuration of the container. The server reads it, the file is removed, and the token only stays in
 # the memory of the server. No automatic restart: after a restart of Docker, claude_mcp start is run again.
@@ -409,7 +423,8 @@ claude_mcp(){
         echo "The secret broker isn't running or is locked: run claude_broker first." >&2
         return 1
     fi
-    _claude_mcp_network || return
+    local network
+    network="$(_claude_mcp_network "$name")" || return
     docker rm "$container" >/dev/null 2>&1
     # The server waits for its token (at most a minute), reads it, removes the file, then replaces the shell.
     local start_script='
@@ -419,7 +434,7 @@ claude_mcp(){
         rm -f /tmp/mcp-token
         exec $MCP_COMMAND'
     docker run -d --name "$container" \
-      --network bridge \
+      --network "$network" \
       --label bfs-claude-agent.role=mcp \
       --user $(id -u):$(id -g) \
       --cap-drop ALL --security-opt no-new-privileges \
@@ -428,7 +443,9 @@ claude_mcp(){
       -e "${spec[1]}" -e MCP_SECRET_NAME="${spec[2]}" -e MCP_COMMAND="${spec[0]}" \
       --entrypoint sh \
       bfs-claude-agent -c "$start_script" >/dev/null || return
-    docker network connect "$AGENT_MCP_NETWORK" "$container" || return
+    if _claude_running claude-gateway; then
+        _claude_gateway_join "$network" || return
+    fi
     # The token goes from the broker to the tmpfs of the MCP container, without touching the host. In a subshell with
     # pipefail, so that a failed export isn't hidden by the second command of the pipe.
     if ! (
@@ -446,7 +463,7 @@ claude_mcp(){
 
 # Waits until the MCP server of a container accepts connections on its port (at most a minute), so that an agent
 # started right after claude_mcp start finds it ready. The check runs inside the container (docker exec), since the
-# host doesn't reach the internal network of the MCP containers.
+# host doesn't reach the network of the server.
 _claude_mcp_wait(){
     local container="$1" port="$2" i
     local probe='import socket, sys
@@ -484,6 +501,10 @@ claude_secret(){
             case "${2:-}" in
                 git|gh) _claude_secret_on broker "$@" ;;
                 all)
+                    if ! _claude_running claude-broker && ! _claude_running claude-gateway; then
+                        echo "Neither the secret broker nor the MCP gateway is running: nothing to $action." >&2
+                        return 1
+                    fi
                     _claude_running claude-broker && _claude_broker_ctl "$@"
                     _claude_running claude-gateway && _claude_gateway_ctl "$@"
                     return 0

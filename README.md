@@ -391,20 +391,20 @@ The Azure DevOps MCP server doesn't run in the agent container, and its token (`
 
 ```
 agent container ──► claude-gateway ──► claude-mcp-devops (DEVOPS_PAT) ──► Azure DevOps Server
-                   (groups, approvals)  (internal network)
+                   (groups, approvals)  (network of its own, shared with the gateway only)
 ```
 
 ### How it works
 
 - **Containers without coupling**: `claude_gateway` starts the gateway, `claude_mcp start devops` the MCP server; neither starts the other, and `claude_dev` starts neither. A missing container only makes the calls that need it fail, with the command to run. After a restart of Docker, `claude_mcp start devops` is run again (the gateway restarts by itself, with every group closed).
-- **Networks**: the gateway is on the network of the agents (`http://claude-gateway:8090/mcp/devops`, the `devops` server of `profiles/dev/mcp.json`) and on an internal network, `AGENT_MCP_NETWORK` (default `bfs-claude-agent-mcp`), shared with the MCP containers only: the agent can't reach an MCP container directly. An MCP container also joins the default network, to reach its server.
+- **Networks**: the gateway is on the network of the agents (`http://claude-gateway:8090/mcp/devops`, the `devops` server of `profiles/dev/mcp.json`). Each MCP server has a Docker network of its own, `<AGENT_MCP_NETWORK_PREFIX>-<server>` (default `bfs-claude-agent-mcp-devops`), whose only members are its container and the gateway; the server reaches Azure DevOps through it. The MCP server has no authentication: Docker isolates the networks from each other, so neither the agent, nor another MCP container, nor a container started without `--network` reaches it. `claude_mcp start` creates the network and connects the gateway when it runs; `claude_gateway` connects to the networks created before it.
 - **Token**: `DEVOPS_PAT` is a secret of type 2 of the secrets file of the broker. The broker never hands it out on the network: `claude_mcp start` reads it through `docker exec` (`claude-broker ctl export`), and writes it straight into the tmpfs of the MCP container, through a pipe between two `docker exec`. The server reads it and removes the file: the token is neither on a disk nor in the configuration of the container (`docker inspect`), only in the memory of the server.
 - **Requests that always go through**: the opening of the session (`initialize`, notifications, `tools/list`), the stream of the server (`GET`), and the end of the session (`DELETE`), so that Claude Code lists the tools from its start. The streamed answers (server-sent events) are forwarded as they come.
-- **Tool calls**: a tool refused by the gateway (the deny rules of `settings.json`: deletion, wiki, repository) is refused; a read tool (an explicit list in `broker/claude_gateway.py`) goes through while the `devops` group is open; **any other tool, including an unknown or new one, is a write**: it goes through while the group is open, and only once approved on the host. A refusal reaches the agent as a tool error, with the command to run.
-- **Approvals**: a write call waits, with a spoken notification ("passerelle: Écriture DevOps à approuver : <tool>"). `claude_secret approve` approves the oldest waiting call (`approve <id>` another one, `claude_secret pending` lists them with their main arguments); `claude_secret approve --tool 5m` also approves the next calls of the same tool for 5 minutes, e.g. the comments of a review; `claude_secret deny` refuses. Without a decision within `GATEWAY_APPROVAL_SECONDS` (default 120), the call is refused. Claude Code still asks its own confirmation before a write: it guards against the agent itself, the approval of the gateway against any process of the agent container that would call the MCP server without Claude Code.
+- **Tool calls**: a tool refused by the gateway (the deny rules of `settings.json`: deletion, wiki, repository) is removed from the answer of `tools/list`, and refused if it's called anyway; a read tool (an explicit list in `broker/claude_gateway.py`) goes through while the `devops` group is open; **any other tool, including an unknown or new one, is a write**: it goes through while the group is open, and only once approved on the host. A refusal reaches the agent as a tool error, with the command to run.
+- **Approvals**: a write call waits, with a spoken notification ("passerelle: Écriture DevOps à approuver : <tool>"). `claude_secret approve` approves the oldest waiting call (`approve <id>` another one); `claude_secret pending` lists them with their full arguments, e.g. the text of a comment, so that the approval is given on what is written. `claude_secret approve --tool 5m` also approves the next calls of the same tool for 5 minutes, e.g. the comments of a review; closing the group (`revoke`, idle or maximum time) ends it; `claude_secret deny` refuses. Without a decision within `GATEWAY_APPROVAL_SECONDS` (default 120), the call is refused. Claude Code still asks its own confirmation before a write: it guards against the agent itself, the approval of the gateway against any process of the agent container that would call the MCP server without Claude Code.
 - **Groups**: the gateway holds the `devops` group itself, with the idle and maximum times of the broker (`BROKER_IDLE_MINUTES`, `BROKER_MAX_HOURS`). For this group, opening a window doesn't hand any token to the agent: it lets the gateway forward the tool calls of the agent.
 - **Hardened containers**: no capability, no privilege escalation, read-only file system, no workspace. The gateway holds no secret.
-- **Log**: every tool call (tool, main arguments, decision) to `$AGENT_GATEWAY_LOG_DIR/gateway.log` (default `~/.claude-agent-homes/gateway`), never a secret value.
+- **Log**: every tool call (tool, main arguments, decision) to `$AGENT_GATEWAY_LOG_DIR/gateway.log` (default `~/.claude-agent-homes/gateway`), never the content written (text of a comment, field values) nor a secret value.
 
 ### Setup
 
@@ -416,7 +416,7 @@ agent container ──► claude-gateway ──► claude-mcp-devops (DEVOPS_PAT
 
 ```bash
 claude_secret allow devops          # the agent may call the Azure DevOps tools
-claude_secret pending               # write calls waiting for an approval
+claude_secret pending               # waiting write calls, with their full arguments
 claude_secret approve               # approves the oldest one
 claude_secret approve --tool 5m     # ... and the next calls of the same tool for 5 minutes
 claude_secret deny                  # refuses the oldest one
