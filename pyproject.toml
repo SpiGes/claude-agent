@@ -1,0 +1,65 @@
+# Configuration of the development tools of the Python code of the image (broker/) and its tests (tests/).
+# The code runs in the containers with the Python of the image (3.12) and the standard library only: the tools are
+# only installed in the development virtual environment (requirements-dev.txt), never in the image.
+
+[tool.black]
+line-length = 120
+target-version = ["py312"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+src = ["broker", "tests"]
+
+[tool.ruff.lint]
+# Every rule, so that the new rules of ruff apply too; each exception below is justified.
+select = ["ALL"]
+ignore = [
+    "COM812",  # trailing commas are handled by black
+    "CPY001",  # no copyright notice in the files of the repository
+    "D203",    # incompatible with D211 (no blank line before a class docstring)
+    "D213",    # incompatible with D212 (summary on the first line of a docstring)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Command-line tools: they talk to the person (or to Git) through their standard output.
+"broker/*" = ["T201"]
+# The tests keep the unittest style, like the tests of the SAS toolkit.
+"tests/*" = [
+    "D",        # test names describe the tests
+    "INP001",   # tests/ isn't a package
+    "N802",     # do_GET... are the names expected by http.server
+    "PLR2004",  # expected values written in the tests
+    "PT009",    # unittest assertions
+    "PT027",    # unittest assertRaises
+    "S",        # fake secrets and local servers
+    "SLF001",   # the tests read the state of the broker
+]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["broker", "tests"]
+mypy_path = "broker"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["broker"]
+addopts = "--cov --cov-report=term-missing"
+
+[tool.coverage.run]
+branch = true
+source = ["broker"]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+exclude_also = ['if __name__ == "__main__":']
+
+[tool.bandit]
+exclude_dirs = ["tests"]
+
+[tool.pyright]
+# Same strict checks as Pylance in VS Code. The modules of broker/ are imported as top-level modules by the tests.
+extraPaths = ["broker"]
+typeCheckingMode = "strict"

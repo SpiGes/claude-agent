@@ -231,7 +231,9 @@ RUN chmod +x /usr/local/bin/agent-memory-sync /usr/local/bin/agent-memory-guard
 # Secret broker (see broker/ and README, "Secret broker"): the service of the claude-broker container, and its
 # clients in the agent container, a Git credential helper and a wrapper of gh placed before /usr/bin/gh in the
 # PATH. Without BROKER_URL (e.g. in a build container), both clients leave Git and gh as they are.
-COPY broker/claude-broker broker/git-credential-broker broker/gh /usr/local/bin/
+COPY broker/claude_broker.py /usr/local/bin/claude-broker
+COPY broker/git_credential_broker.py /usr/local/bin/git-credential-broker
+COPY broker/gh /usr/local/bin/gh
 COPY broker/secrets.example /usr/local/share/claude-broker/secrets.example
 RUN chmod +x /usr/local/bin/claude-broker /usr/local/bin/git-credential-broker /usr/local/bin/gh
 

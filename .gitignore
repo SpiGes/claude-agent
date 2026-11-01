@@ -1,2 +1,9 @@
 .env
 claude-home-*/
+# Development tools of the Python code (see README, "Development")
+.venv/
+__pycache__/
+.coverage
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/

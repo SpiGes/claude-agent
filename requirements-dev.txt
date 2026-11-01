@@ -1,0 +1,10 @@
+# Development tools of the Python code of the image (see pyproject.toml); nothing is installed in the image.
+bandit==1.9.4
+black==26.10.1
+coverage==7.16.2
+mypy==2.4.0
+pre-commit==4.7.0
+pyright==1.1.414
+pytest-cov==7.1.0
+pytest==9.1.1
+ruff==0.17.1

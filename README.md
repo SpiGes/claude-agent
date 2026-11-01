@@ -346,7 +346,7 @@ The Git tokens and the GitHub API token aren't given to the agent container at s
 - **Groups**: `git` (the Git tokens) and `gh` (the GitHub API token). A group is opened with `claude_secret allow <group>`, which runs the command in the broker with `docker exec`: the agent container has no access to Docker, so it can't open a group by itself. A group closes `BROKER_IDLE_MINUTES` (default 30) after its last use, and `BROKER_MAX_HOURS` (default 4) after it was opened, whichever comes first. Both can be exported in `~/.bashrc`, and apply at the next start of the broker.
 - **Clients in the agent container**: Git asks the broker through a credential helper (`git-credential-broker`) when a server requires authentication, and before every request to the Azure DevOps Server, which gets Basic authentication right away (it also offers NTLM, which curl would prefer and which fails with a PAT); `gh` through a wrapper (`/usr/local/bin/gh`) that gets the token for each call. The Git settings are written at startup into `/tmp/gitconfig-broker`, included by the system configuration of the image, only when `BROKER_URL` is set: a container of the image without broker (e.g. a build container) keeps its own Git settings, and the wrapper of `gh` runs the real `gh` as is.
 - **Refusals**: when the broker is locked or the group is closed, Git and `gh` fail with a message giving the command to run on the host, and a spoken notification is sent ("courtier: Autorisation requise pour git"), at most once every two minutes.
-- **Log**: every request and every command is logged to `$AGENT_BROKER_LOG_DIR/broker.log` (default `~/.claude-agent-homes/broker`), with the URL and the name of the entry, never a secret value. Above 1 MB, the log becomes `broker.log.1` (replacing the previous one) when the broker starts.
+- **Log**: every request and every command is logged to `$AGENT_BROKER_LOG_DIR/broker.log` (default `~/.claude-agent-homes/broker`), with the URL and the name of the entry, never a secret value. Above 1 MB, the log becomes `broker.log.1` (replacing the previous one).
 
 ### Secrets file
 
@@ -467,8 +467,8 @@ bfs-claude-agent/
     agent-memory-sync        (copied into the image)
     agent-memory-guard       (copied into the image)
   broker/                    (copied into the image)
-    claude-broker            (service of the secret broker)
-    git-credential-broker    (Git credential helper of the agent)
+    claude_broker.py         (service of the secret broker, /usr/local/bin/claude-broker)
+    git_credential_broker.py (Git credential helper of the agent, /usr/local/bin/git-credential-broker)
     gh                       (wrapper of the GitHub CLI)
     secrets.example          (template of the secrets file)
   certs/
@@ -476,6 +476,10 @@ bfs-claude-agent/
     nexus-ca.pem
     swissgov-root.cer
   .env.example
+  pyproject.toml             (checks of the Python code, see "Development")
+  requirements-dev.txt
+  .pre-commit-config.yaml
+  tests/                     (tests of broker/)
   profiles/
     dev/
       CLAUDE.md
@@ -495,6 +499,19 @@ Nothing personal or secret lives inside this repository:
 - `AGENT_ENV_FILE` (default `$AGENT_HOMES_DIR/.env`) holds the real Claude Code token and the commit authorship of each server; only `.env.example`, with placeholders, is committed here.
 - `AGENT_VAULT_DIR` (default `$AGENT_HOMES_DIR/vault`) holds the encrypted secrets file of the secret broker (Git tokens, GitHub API token), and `AGENT_BROKER_LOG_DIR` (default `$AGENT_HOMES_DIR/broker`) its log; only `broker/secrets.example` is committed here.
 - `SHARED_BASE_DIR` (default `~/.agents/shared`) holds ad-hoc documents shared with the agent, outside any project repository.
+
+## Development
+
+The Python code of the image (`broker/`) and its tests (`tests/`) follow the same checks as the Python scripts of the SAS toolkit, set in `pyproject.toml`: black, ruff with every rule (each exception justified), mypy and pyright in strict mode, bandit, and the tests (unittest style, run with pytest) with a coverage of at least 90 %. The code uses the Python of the image (3.12) and the standard library only; the tools are only installed in a virtual environment of the clone, never in the image:
+
+```bash
+python3 -m venv --upgrade-deps .venv
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/pre-commit install      # runs every check before each commit (.pre-commit-config.yaml)
+.venv/bin/pre-commit run --all-files
+```
+
+The versions in `requirements-dev.txt` and in `.pre-commit-config.yaml` are kept in line.
 
 ## Troubleshooting
 
