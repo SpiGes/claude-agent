@@ -2,11 +2,13 @@
   "mcpServers": {
     "confluence": {
       "type": "http",
-      "url": "http://claude-gateway:8090/mcp/confluence"
+      "url": "http://claude-gateway:8090/mcp/confluence",
+      "timeout": 180000
     },
     "devops": {
       "type": "http",
-      "url": "http://claude-gateway:8090/mcp/devops"
+      "url": "http://claude-gateway:8090/mcp/devops",
+      "timeout": 180000
     }
   }
 }
