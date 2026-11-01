@@ -2,11 +2,11 @@
 """MCP gateway of the agent (see README, "MCP gateway").
 
 Runs in its own container (claude-gateway, started by launch.sh), on the Docker network of the agents and on the
-internal network of the MCP containers, which the agent can't reach. It forwards the MCP requests of the agent
-(streamable HTTP transport, streamed answers included) to the MCP container of the route, and controls the tool
-calls (`tools/call`):
+network of each MCP container, which the agent can't reach. It forwards the MCP requests of the agent (streamable
+HTTP transport, streamed answers included) to the MCP container of the route, and controls the tool calls
+(`tools/call`):
 
-- a tool refused by the policy of the route is refused
+- a tool refused by the policy of the route is refused, as is any write tool of a read-only route (Jira)
 - a read tool goes through while the group of the route is open
 - any other tool is a write: it goes through while the group is open, and only once the person approved it on the
   host (claude_secret approve), or it's refused after GATEWAY_APPROVAL_SECONDS
@@ -63,7 +63,11 @@ STREAM_CHUNK_BYTES: Final = 64 * 1024
 # Request and answer headers of the streamable HTTP transport, forwarded as they are; no other header goes through.
 REQUEST_HEADERS: Final = ("Content-Type", "Accept", "Mcp-Session-Id", "Mcp-Protocol-Version", "Last-Event-Id")
 RESPONSE_HEADERS: Final = ("Content-Type", "Mcp-Session-Id", "Cache-Control")
-SUMMARY_SKIPPED_KEYS: Final = frozenset({"content", "text", "body", "description", "comment", "value", "patch"})
+SUMMARY_SKIPPED_KEYS: Final = frozenset(
+    {"content", "new_content", "content_base64", "text", "body", "description", "comment", "value", "patch"}
+)
+# Arguments of a waiting write call that `pending` shows by their length only (encoded files, unreadable as text).
+DETAILS_ELIDED_KEYS: Final = frozenset({"content_base64"})
 SUMMARY_MAX_LENGTH: Final = 160
 SUMMARY_MAX_VALUE_LENGTH: Final = 60
 # Arguments of a waiting write call shown by `pending`, in full up to this length: the person sees what is written.
@@ -75,19 +79,25 @@ LOGGER: Final = logging.getLogger("claude-gateway")
 
 @dataclass(frozen=True, slots=True)
 class Policy:
-    """Tools of an MCP server: the read tools, and the tools refused by the gateway; any other tool is a write."""
+    """Tools of an MCP server: the read tools, and the tools refused by the gateway; any other tool is a write.
+
+    A read-only server (`writes_allowed=False`) has no write: any tool that isn't a read tool is refused.
+    """
 
     group: str
     label: str
     read_tools: frozenset[str]
     denied_tools: frozenset[str] = frozenset()
     denied_prefixes: tuple[str, ...] = ()
+    writes_allowed: bool = True
 
     def classify(self, tool: str) -> str:
-        """Return `denied`, `read` or `write`; an unknown tool is a write."""
+        """Return `denied`, `read` or `write`; an unknown tool is a write, or denied on a read-only server."""
         if tool in self.denied_tools or tool.startswith(self.denied_prefixes):
             return "denied"
-        return "read" if tool in self.read_tools else "write"
+        if tool in self.read_tools:
+            return "read"
+        return "write" if self.writes_allowed else "denied"
 
 
 # Azure DevOps (mcp-devops-onpremise). Denied: the same tools as the deny rules of profiles/dev/settings.json.
@@ -120,7 +130,99 @@ DEVOPS_POLICY: Final = Policy(
     denied_prefixes=("devops_repository_", "devops_wiki_"),
 )
 
-POLICIES: Final[Mapping[str, Policy]] = {"devops": DEVOPS_POLICY}
+# Jira (mcp-atlassian --read-only): read only, so every other tool is refused, without approval. The read tools are
+# those of the server with the readOnlyHint annotation.
+JIRA_POLICY: Final = Policy(
+    group="jira",
+    label="Jira",
+    read_tools=frozenset(
+        {
+            "jira_batch_get_changelogs",
+            "jira_download_attachments",
+            "jira_get_agile_boards",
+            "jira_get_all_projects",
+            "jira_get_board_issues",
+            "jira_get_create_fields",
+            "jira_get_cross_project_dependencies",
+            "jira_get_field_options",
+            "jira_get_issue",
+            "jira_get_issue_dates",
+            "jira_get_issue_development_info",
+            "jira_get_issue_images",
+            "jira_get_issue_proforma_forms",
+            "jira_get_issue_sla",
+            "jira_get_issue_watchers",
+            "jira_get_issues_development_info",
+            "jira_get_link_types",
+            "jira_get_proforma_form_details",
+            "jira_get_project_components",
+            "jira_get_project_epic_hierarchy",
+            "jira_get_project_fields",
+            "jira_get_project_issue_types",
+            "jira_get_project_issues",
+            "jira_get_project_versions",
+            "jira_get_queue_issues",
+            "jira_get_request_type_fields",
+            "jira_get_request_types",
+            "jira_get_service_desk_for_project",
+            "jira_get_service_desk_queues",
+            "jira_get_sprint_issues",
+            "jira_get_sprints_from_board",
+            "jira_get_transitions",
+            "jira_get_user_profile",
+            "jira_get_worklog",
+            "jira_search",
+            "jira_search_assignable_users",
+            "jira_search_fields",
+            "jira_search_projects",
+        }
+    ),
+    writes_allowed=False,
+)
+
+# Confluence (mcp-atlassian). The read tools are those of the server with the readOnlyHint annotation. Denied: the same
+# tools as the deny rules of profiles/dev/settings.json.
+CONFLUENCE_POLICY: Final = Policy(
+    group="confluence",
+    label="Confluence",
+    read_tools=frozenset(
+        {
+            "confluence_check_content_permissions",
+            "confluence_download_attachment",
+            "confluence_download_content_attachments",
+            "confluence_get_attachments",
+            "confluence_get_comments",
+            "confluence_get_inline_comments",
+            "confluence_get_labels",
+            "confluence_get_page",
+            "confluence_get_page_children",
+            "confluence_get_page_diff",
+            "confluence_get_page_history",
+            "confluence_get_page_images",
+            "confluence_get_page_restrictions",
+            "confluence_get_page_template",
+            "confluence_get_page_views",
+            "confluence_get_space_page_tree",
+            "confluence_get_space_permissions",
+            "confluence_list_page_templates",
+            "confluence_search",
+            "confluence_search_user",
+        }
+    ),
+    denied_tools=frozenset(
+        {
+            "confluence_delete_page",
+            "confluence_move_page",
+            "confluence_set_page_restrictions",
+        }
+    ),
+)
+
+POLICIES: Final[Mapping[str, Policy]] = {
+    "devops": DEVOPS_POLICY,
+    "jira": JIRA_POLICY,
+    "confluence": CONFLUENCE_POLICY,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -233,7 +335,20 @@ def summarize(arguments: object) -> str:
 
 
 def details(arguments: object) -> str:
-    """Return the full arguments of a tool call, indented, for the approval on the host (never logged)."""
+    """Return the full arguments of a tool call, indented, for the approval on the host (never logged).
+
+    An encoded file (e.g. `content_base64`) is replaced by its length: unreadable as text, it would push the other
+    arguments past the length limit.
+    """
+    if isinstance(arguments, dict):
+        arguments = {
+            key: (
+                f"({len(value)} characters of base64)"
+                if key in DETAILS_ELIDED_KEYS and isinstance(value, str)
+                else value
+            )
+            for key, value in cast("dict[str, object]", arguments).items()
+        }
     text = json.dumps(arguments, ensure_ascii=False, indent=2, sort_keys=True)
     if len(text) > DETAILS_MAX_LENGTH:
         text = text[:DETAILS_MAX_LENGTH] + f"\n… (cut, {len(text)} characters in all)"

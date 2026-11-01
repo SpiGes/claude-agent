@@ -30,6 +30,10 @@ export BROKER_MAX_HOURS="${BROKER_MAX_HOURS:-4}"
 export AGENT_MCP_NETWORK_PREFIX="${AGENT_MCP_NETWORK_PREFIX:-bfs-claude-agent-mcp}"
 export AGENT_GATEWAY_LOG_DIR="${AGENT_GATEWAY_LOG_DIR:-$AGENT_HOMES_DIR/gateway}"
 export GATEWAY_APPROVAL_SECONDS="${GATEWAY_APPROVAL_SECONDS:-120}"
+# MCP servers started by claude_mcp, and the drop folder of the Confluence server (the files it reads: page bodies and
+# attachments), under /shared so that the agent writes there and the person opens them before an approval.
+export AGENT_MCP_SERVERS="devops jira confluence"
+export AGENT_MCP_CONFLUENCE_DIR="${AGENT_MCP_CONFLUENCE_DIR:-$SHARED_BASE_DIR/mcp-confluence}"
 
 # Name that starts each notification of an agent: the name of its workspace folder, or of the folder
 # above it when the workspace is a "branch" folder (e.g. backend/branch gives "backend"). AGENT_NOTIFY_NAME
@@ -320,10 +324,19 @@ _claude_gateway_ctl(){
     docker exec -i claude-gateway claude-gateway ctl "$@"
 }
 
+# Routes of the gateway, one per MCP server: <server>=http://claude-mcp-<server>:8000/mcp,...
+_claude_gateway_routes(){
+    local name routes=()
+    for name in $AGENT_MCP_SERVERS; do
+        routes+=("$name=http://claude-mcp-$name:8000/mcp")
+    done
+    (IFS=,; echo "${routes[*]}")
+}
+
 # Starts the MCP gateway (see README, "MCP gateway") unless it's running: on the network of the agents, which reach
 # it at http://claude-gateway:8090/mcp/<name>, and on the network of each MCP server created so far (claude_mcp
 # connects it to the networks created later). It holds no secret:
-# its groups (devops) and the waiting write calls are lost when it restarts, every group is then closed. It doesn't
+# its groups (devops, jira, confluence) and the waiting write calls are lost when it restarts, every group is then closed. It doesn't
 # start the MCP containers (claude_mcp), nor is it started by claude_dev.
 claude_gateway(){
     _claude_network || return
@@ -348,7 +361,7 @@ claude_gateway(){
       --cap-drop ALL --security-opt no-new-privileges \
       --read-only --tmpfs /tmp:mode=1777 \
       -e PYTHONDONTWRITEBYTECODE=1 \
-      -e GATEWAY_ROUTES=devops=http://claude-mcp-devops:8000/mcp \
+      -e GATEWAY_ROUTES="$(_claude_gateway_routes)" \
       -e GATEWAY_IDLE_MINUTES="$BROKER_IDLE_MINUTES" -e GATEWAY_MAX_HOURS="$BROKER_MAX_HOURS" \
       -e GATEWAY_APPROVAL_SECONDS \
       "${notify_args[@]}" \
@@ -373,24 +386,42 @@ claude_gateway_stop(){
 }
 
 # MCP servers moved out of the agent container (see README, "MCP gateway"): command line, settings, the secret of
-# type 2 that the server gets from the secret broker, and the port it listens on. Printed as four lines.
+# type 2 that the server gets from the secret broker, the port it listens on, then the other arguments of docker run
+# (settings, mounts), one per line.
+#
+# mcp-atlassian runs one service per container (Jira or Confluence), so that each container holds one token. Over
+# HTTP, it refuses by default a request that brings no credentials of its own (ALLOW_GLOBAL_CRED_FALLBACK): here, only
+# the gateway reaches it, which forwards no credential header. Jira is read only (--read-only, and the gateway refuses
+# any other tool). Confluence reads the files of content_file, file_path and file_paths only under its working folder,
+# the drop folder of /shared, mounted read only at the same path as in the agent.
 _claude_mcp_spec(){
+    local atlassian="mcp-atlassian --transport streamable-http --host 0.0.0.0 --port 8000"
     case "$1" in
         devops)
-            echo "mcp-devops-onpremise --transport streamable-http --host 0.0.0.0 --port 8000"
-            echo "DEVOPS_API_URL=https://devops-server.admin.ch/DefaultCollection/BFS_SIS"
-            echo "DEVOPS_PAT"
-            echo "8000"
+            printf '%s\n' "mcp-devops-onpremise --transport streamable-http --host 0.0.0.0 --port 8000" \
+              DEVOPS_PAT 8000 \
+              -e DEVOPS_API_URL=https://devops-server.admin.ch/DefaultCollection/BFS_SIS
+            ;;
+        jira)
+            printf '%s\n' "$atlassian --read-only" JIRA_PERSONAL_TOKEN 8000 \
+              -e JIRA_URL=https://intranet.jira.bfs.admin.ch/jira \
+              -e TOOLSETS=all -e ALLOW_GLOBAL_CRED_FALLBACK=true
+            ;;
+        confluence)
+            printf '%s\n' "$atlassian" CONFLUENCE_PERSONAL_TOKEN 8000 \
+              -e CONFLUENCE_URL=https://intranet.confluence.bfs.admin.ch/confluence \
+              -e TOOLSETS=all -e ALLOW_GLOBAL_CRED_FALLBACK=true \
+              -v "$AGENT_MCP_CONFLUENCE_DIR:/shared/mcp-confluence:ro" -w /shared/mcp-confluence
             ;;
         *)
-            echo "Unknown MCP server '$1' (servers: devops)." >&2
+            echo "Unknown MCP server '$1' (servers: $AGENT_MCP_SERVERS)." >&2
             return 1
             ;;
     esac
 }
 
 # Starts, stops, or restarts the container of an MCP server (see README, "MCP gateway"):
-#   claude_mcp start|stop|restart <server>   (servers: devops)
+#   claude_mcp start|stop|restart <server>   (servers: devops, jira, confluence)
 # The container starts without its token, on the network of the server, shared with the gateway only (connected to it
 # when it runs). Its token is then read from the secret broker (ctl export, through docker exec) and written
 # straight into the tmpfs of the container, through a pipe between two docker exec: no variable, no file on the host,
@@ -399,12 +430,12 @@ _claude_mcp_spec(){
 claude_mcp(){
     local action="${1:-}" name="${2:-}"
     if [[ ! "$action" =~ ^(start|stop|restart)$ ]] || [ -z "$name" ]; then
-        echo "Usage: claude_mcp start|stop|restart <server> (servers: devops)" >&2
+        echo "Usage: claude_mcp start|stop|restart <server> (servers: $AGENT_MCP_SERVERS)" >&2
         return 2
     fi
     local -a spec
     mapfile -t spec < <(_claude_mcp_spec "$name") || return
-    [ "${#spec[@]}" = 4 ] || return 1
+    [ "${#spec[@]}" -ge 3 ] || return 1
     local container="claude-mcp-$name"
     if [ "$action" != start ] || _claude_outdated "$container"; then
         if docker stop "$container" >/dev/null 2>&1; then
@@ -426,6 +457,10 @@ claude_mcp(){
     local network
     network="$(_claude_mcp_network "$name")" || return
     docker rm "$container" >/dev/null 2>&1
+    # Created here, with the account of the user: a folder that docker run creates for a mount belongs to root.
+    if [ "$name" = confluence ]; then
+        mkdir -p "$AGENT_MCP_CONFLUENCE_DIR" || return
+    fi
     # The server waits for its token (at most a minute), reads it, removes the file, then replaces the shell.
     local start_script='
         for i in $(seq 300); do [ -s /tmp/mcp-token ] && break; sleep 0.2; done
@@ -440,7 +475,7 @@ claude_mcp(){
       --cap-drop ALL --security-opt no-new-privileges \
       --read-only --tmpfs /tmp:mode=1777 \
       -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 \
-      -e "${spec[1]}" -e MCP_SECRET_NAME="${spec[2]}" -e MCP_COMMAND="${spec[0]}" \
+      -e MCP_SECRET_NAME="${spec[1]}" -e MCP_COMMAND="${spec[0]}" "${spec[@]:3}" \
       --entrypoint sh \
       bfs-claude-agent -c "$start_script" >/dev/null || return
     if _claude_running claude-gateway; then
@@ -450,14 +485,14 @@ claude_mcp(){
     # pipefail, so that a failed export isn't hidden by the second command of the pipe.
     if ! (
         set -o pipefail
-        _claude_broker_ctl export "${spec[2]}" \
+        _claude_broker_ctl export "${spec[1]}" \
           | docker exec -i "$container" sh -c 'umask 077; cat > /tmp/mcp-token.part && mv /tmp/mcp-token.part /tmp/mcp-token'
     ); then
-        echo "The token ${spec[2]} couldn't be handed to the MCP server $name: is it in the secrets file?" >&2
+        echo "The token ${spec[1]} couldn't be handed to the MCP server $name: is it in the secrets file?" >&2
         docker stop "$container" >/dev/null 2>&1; docker rm "$container" >/dev/null 2>&1
         return 1
     fi
-    _claude_mcp_wait "$container" "${spec[3]}" || return
+    _claude_mcp_wait "$container" "${spec[2]}" || return
     echo "MCP server $name started."
 }
 
@@ -484,7 +519,7 @@ except OSError:
 }
 
 # Commands of the secret broker and of the MCP gateway (see README, "Secret broker", "MCP gateway"):
-#   claude_secret allow <group>           opens a group: git, gh (broker); devops (gateway)
+#   claude_secret allow <group>           opens a group: git, gh (broker); devops, jira, confluence (gateway)
 #   claude_secret revoke <group>|all      closes a group, or every group of both
 #   claude_secret status                  state of the broker and of the gateway, and the waiting write calls
 #   claude_secret pending                 waiting write calls of the gateway

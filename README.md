@@ -311,7 +311,7 @@ With the voice input enabled, every process of the container can record the micr
 | `claude_broker` / `claude_broker_stop` | Starts and unlocks the secret broker, or stops it (see "Secret broker"); `claude_dev` starts it when needed |
 | `claude_secret allow <group>` | Opens a group: `git`, `gh` (secret broker), `devops` (MCP gateway); also `revoke <group>\|all`, `status`, `pending`, `approve`, `deny`, `log`, `edit` (see "Secret broker", "MCP gateway") |
 | `claude_gateway` / `claude_gateway_stop` | Starts or stops the MCP gateway (see "MCP gateway") |
-| `claude_mcp start\|stop\|restart devops` | Starts, stops, or restarts the container of the Azure DevOps MCP server, with its token from the secret broker; `start` returns once the server accepts connections (see "MCP gateway") |
+| `claude_mcp start\|stop\|restart <server>` | Starts, stops, or restarts the container of an MCP server (`devops`, `jira`, `confluence`), with its token from the secret broker; `start` returns once the server accepts connections (see "MCP gateway") |
 
 Each command starts a new container, removed on exit (--rm); nothing needs to be stopped or cleaned up by hand. Several agents can run at the same time, see "Several agents at the same time" below.
 
@@ -387,40 +387,51 @@ For an installation from before the broker: the Git tokens of `.env` (`GIT_CONFI
 
 ## MCP gateway
 
-The Azure DevOps MCP server doesn't run in the agent container, and its token (`DEVOPS_PAT`) isn't in the environment of the agent. It runs in a container of its own, with its token only, and the agent reaches it through a gateway that checks every tool call.
+The MCP servers of Azure DevOps, Jira, and Confluence don't run in the agent container, and their tokens (`DEVOPS_PAT`, `JIRA_PERSONAL_TOKEN`, `CONFLUENCE_PERSONAL_TOKEN`) aren't in the environment of the agent. Each one runs in a container of its own, with its token only, and the agent reaches them through a gateway that checks every tool call.
 
 ```
-agent container ──► claude-gateway ──► claude-mcp-devops (DEVOPS_PAT) ──► Azure DevOps Server
-                   (groups, approvals)  (network of its own, shared with the gateway only)
+agent container ──► claude-gateway ──► claude-mcp-devops     (DEVOPS_PAT)                ──► Azure DevOps Server
+                   (groups,         ──► claude-mcp-jira       (JIRA_PERSONAL_TOKEN)       ──► Jira Data Center
+                    approvals)      ──► claude-mcp-confluence (CONFLUENCE_PERSONAL_TOKEN) ──► Confluence Data Center
+                                        (each on a network of its own, shared with the gateway only)
 ```
+
+| Server | Group | Tools |
+|---|---|---|
+| `devops` (`mcp-devops-onpremise`) | `devops` | Read tools go through while the group is open; writes need an approval; deletion, wiki, and repository tools are refused |
+| `jira` (`mcp-atlassian --read-only`) | `jira` | Read only: read tools go through while the group is open; any other tool is refused, without approval |
+| `confluence` (`mcp-atlassian`) | `confluence` | Read tools go through while the group is open; writes need an approval; page deletion, page moves, and restriction changes are refused |
 
 ### How it works
 
-- **Containers without coupling**: `claude_gateway` starts the gateway, `claude_mcp start devops` the MCP server; neither starts the other, and `claude_dev` starts neither. A missing container only makes the calls that need it fail, with the command to run. After a restart of Docker, `claude_mcp start devops` is run again (the gateway restarts by itself, with every group closed).
-- **Networks**: the gateway is on the network of the agents (`http://claude-gateway:8090/mcp/devops`, the `devops` server of `profiles/dev/mcp.json`). Each MCP server has a Docker network of its own, `<AGENT_MCP_NETWORK_PREFIX>-<server>` (default `bfs-claude-agent-mcp-devops`), whose only members are its container and the gateway; the server reaches Azure DevOps through it. The MCP server has no authentication: Docker isolates the networks from each other, so neither the agent, nor another MCP container, nor a container started without `--network` reaches it. `claude_mcp start` creates the network and connects the gateway when it runs; `claude_gateway` connects to the networks created before it.
-- **Token**: `DEVOPS_PAT` is a secret of type 2 of the secrets file of the broker. The broker never hands it out on the network: `claude_mcp start` reads it through `docker exec` (`claude-broker ctl export`), and writes it straight into the tmpfs of the MCP container, through a pipe between two `docker exec`. The server reads it and removes the file: the token is neither on a disk nor in the configuration of the container (`docker inspect`), only in the memory of the server.
+- **Containers without coupling**: `claude_gateway` starts the gateway, `claude_mcp start <server>` an MCP server; neither starts the other, and `claude_dev` starts neither. A missing container only makes the calls that need it fail, with the command to run. After a restart of Docker, `claude_mcp start <server>` is run again for each server (the gateway restarts by itself, with every group closed).
+- **Networks**: the gateway is on the network of the agents (`http://claude-gateway:8090/mcp/<server>`, the servers of `profiles/dev/mcp.json`). Each MCP server has a Docker network of its own, `<AGENT_MCP_NETWORK_PREFIX>-<server>` (default `bfs-claude-agent-mcp-<server>`), whose only members are its container and the gateway; the server reaches its remote service through it. The MCP servers have no authentication: Docker isolates the networks from each other, so neither the agent, nor another MCP container, nor a container started without `--network` reaches them. `claude_mcp start` creates the network and connects the gateway when it runs; `claude_gateway` connects to the networks created before it.
+- **Tokens**: the tokens are secrets of type 2 of the secrets file of the broker. The broker never hands them out on the network: `claude_mcp start` reads the token of the server through `docker exec` (`claude-broker ctl export`), and writes it straight into the tmpfs of the MCP container, through a pipe between two `docker exec`. The server reads it and removes the file: the token is neither on a disk nor in the configuration of the container (`docker inspect`), only in the memory of the server.
+- **Jira and Confluence servers**: `mcp-atlassian` runs one service per container, so that each container holds one token. Over HTTP, it refuses by default a request without credentials of its own, so that an unknown caller doesn't act with the token of the server: `ALLOW_GLOBAL_CRED_FALLBACK=true` lets it serve the gateway, which is the only one to reach it and forwards no credential header (only the headers of the MCP transport go through).
+- **Confluence drop folder**: the page body (`content_file`) and the attachments (`file_path`, `file_paths`) are read by the Confluence server from files. It only reads them under its working folder, `/shared/mcp-confluence` (`$AGENT_MCP_CONFLUENCE_DIR`, default `$SHARED_BASE_DIR/mcp-confluence`), mounted read only at the same path as in the agent: a path outside it is refused by the server, symbolic links included. The `confluence-publish` skill copies the files there before the publication, and they can be opened on the host before an approval.
 - **Requests that always go through**: the opening of the session (`initialize`, notifications, `tools/list`), the stream of the server (`GET`), and the end of the session (`DELETE`), so that Claude Code lists the tools from its start. The streamed answers (server-sent events) are forwarded as they come.
-- **Tool calls**: a tool refused by the gateway (the deny rules of `settings.json`: deletion, wiki, repository) is removed from the answer of `tools/list`, and refused if it's called anyway; a read tool (an explicit list in `broker/claude_gateway.py`) goes through while the `devops` group is open; **any other tool, including an unknown or new one, is a write**: it goes through while the group is open, and only once approved on the host. A refusal reaches the agent as a tool error, with the command to run.
-- **Approvals**: a write call waits, with a spoken notification ("passerelle: Écriture DevOps à approuver : <tool>"). `claude_secret approve` approves the oldest waiting call (`approve <id>` another one); `claude_secret pending` lists them with their full arguments, e.g. the text of a comment, so that the approval is given on what is written. `claude_secret approve --tool 5m` also approves the next calls of the same tool for 5 minutes, e.g. the comments of a review; closing the group (`revoke`, idle or maximum time) ends it; `claude_secret deny` refuses. Without a decision within `GATEWAY_APPROVAL_SECONDS` (default 120), the call is refused. Claude Code still asks its own confirmation before a write: it guards against the agent itself, the approval of the gateway against any process of the agent container that would call the MCP server without Claude Code.
-- **Groups**: the gateway holds the `devops` group itself, with the idle and maximum times of the broker (`BROKER_IDLE_MINUTES`, `BROKER_MAX_HOURS`). For this group, opening a window doesn't hand any token to the agent: it lets the gateway forward the tool calls of the agent.
-- **Hardened containers**: no capability, no privilege escalation, read-only file system, no workspace. The gateway holds no secret.
-- **Log**: every tool call (tool, main arguments, decision) to `$AGENT_GATEWAY_LOG_DIR/gateway.log` (default `~/.claude-agent-homes/gateway`), never the content written (text of a comment, field values) nor a secret value.
+- **Tool calls**: a tool refused by the gateway (the deny rules of `settings.json`, and every write of Jira) is removed from the answer of `tools/list`, and refused if it's called anyway; a read tool (an explicit list per server in `broker/claude_gateway.py`) goes through while the group of the server is open; **any other tool, including an unknown or new one, is a write**: it goes through while the group is open, and only once approved on the host. A refusal reaches the agent as a tool error, with the command to run.
+- **Approvals**: a write call waits, with a spoken notification ("passerelle: Écriture DevOps à approuver : <tool>"). `claude_secret approve` approves the oldest waiting call (`approve <id>` another one); `claude_secret pending` lists them with their full arguments, e.g. the text of a comment, so that the approval is given on what is written (an encoded file, `content_base64`, is shown by its length). `claude_secret approve --tool 5m` also approves the next calls of the same tool for 5 minutes, e.g. the comments of a review; closing the group (`revoke`, idle or maximum time) ends it; `claude_secret deny` refuses. Without a decision within `GATEWAY_APPROVAL_SECONDS` (default 120), the call is refused. Claude Code still asks its own confirmation before most writes: it guards against the agent itself, the approval of the gateway against any process of the agent container that would call an MCP server without Claude Code.
+- **Groups**: the gateway holds the `devops`, `jira`, and `confluence` groups itself, with the idle and maximum times of the broker (`BROKER_IDLE_MINUTES`, `BROKER_MAX_HOURS`). For these groups, opening a window doesn't hand any token to the agent: it lets the gateway forward the tool calls of the agent.
+- **Hardened containers**: no capability, no privilege escalation, read-only file system, no workspace (the Confluence server only gets its drop folder, read only). The gateway holds no secret.
+- **Log**: every tool call (server, tool, main arguments, decision) to `$AGENT_GATEWAY_LOG_DIR/gateway.log` (default `~/.claude-agent-homes/gateway`), never the content written (text of a comment or page, field values) nor a secret value.
 
 ### Setup
 
-1. `DEVOPS_PAT=<PAT>` is added to the secrets file (`claude_secret edit`), and removed from `.env`.
-2. The image is rebuilt, then: `claude_broker` (unlock), `claude_gateway`, `claude_mcp start devops`.
-3. `claude_dev`; when the gateway or the MCP container started after the agent, `/mcp` in Claude Code reconnects the `devops` server.
+1. The tokens are added to the secrets file (`claude_secret edit`: `DEVOPS_PAT`, `JIRA_PERSONAL_TOKEN`, `CONFLUENCE_PERSONAL_TOKEN`), and removed from `.env`.
+2. The image is rebuilt, then: `claude_broker` (unlock), `claude_gateway`, and `claude_mcp start <server>` for each server.
+3. A workspace that declares the Jira server in its own `.mcp.json` points it to the gateway: `"jira": {"type": "http", "url": "http://claude-gateway:8090/mcp/jira"}`.
+4. `claude_dev`; when the gateway or an MCP container started after the agent, `/mcp` in Claude Code reconnects the server.
 
 ### Usage
 
 ```bash
-claude_secret allow devops          # the agent may call the Azure DevOps tools
+claude_secret allow devops          # the agent may call the Azure DevOps tools (also: jira, confluence)
 claude_secret pending               # waiting write calls, with their full arguments
 claude_secret approve               # approves the oldest one
 claude_secret approve --tool 5m     # ... and the next calls of the same tool for 5 minutes
 claude_secret deny                  # refuses the oldest one
-claude_mcp restart devops           # e.g. after a new PAT in the secrets file
+claude_mcp restart confluence       # e.g. after a new token in the secrets file
 ```
 
 ## Several agents at the same time
@@ -480,7 +491,7 @@ Changing a profile does not require rebuilding the image (docker build); these f
 
 The dev profile's `mcp.json` currently declares two MCP servers, each documented in its own appendix in the specs repository:
 
-- **confluence**: reads and writes Confluence Data Center pages directly from Markdown, instead of the manual copy-paste workflow. Its Personal Access Token cannot be scoped down and keeps the full rights of the account that created it, so `settings.json` adds a compensating boundary: page deletion, page moves, and restriction changes are denied outright, and every other write (create, update, add a comment or attachment, and so on) asks for confirmation first.
+- **confluence**: reads and writes Confluence Data Center pages directly from Markdown, instead of the manual copy-paste workflow. Its Personal Access Token cannot be scoped down and keeps the full rights of the account that created it, so `settings.json` adds a compensating boundary: page deletion, page moves, and restriction changes are denied outright, and every other write (create, update, add a comment or attachment, and so on) asks for confirmation first. It doesn't run in the agent container either: the agent reaches it through the MCP gateway (see "MCP gateway"), which refuses the same tools and lets every other write through only once approved on the host.
 - **devops**: reads and writes pull requests, their comment threads, and work items of the on-premises Azure DevOps Server. It doesn't run in the agent container: the agent reaches it through the MCP gateway (see "MCP gateway"), which lets the read tools through while the `devops` group is open, and every write tool only once approved on the host. `settings.json` still denies the outright destructive tools (deletion, wiki, repository operations) and asks before the other writes.
 
 ### Adding a new profile

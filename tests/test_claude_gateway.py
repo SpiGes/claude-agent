@@ -13,7 +13,10 @@ from unittest import mock
 
 import claude_gateway
 from claude_gateway import (
+    CONFLUENCE_POLICY,
     DEVOPS_POLICY,
+    JIRA_POLICY,
+    POLICIES,
     Approvals,
     Gateway,
     GatewayHTTPServer,
@@ -149,6 +152,45 @@ class PolicyTest(unittest.TestCase):
         self.assertEqual(DEVOPS_POLICY.classify("devops_repository_get"), "denied")
         self.assertEqual(DEVOPS_POLICY.classify("devops_wiki_page_get"), "denied")
 
+    def test_classify_jira_read_only(self) -> None:
+        self.assertEqual(JIRA_POLICY.classify("jira_get_issue"), "read")
+        self.assertEqual(JIRA_POLICY.classify("jira_search"), "read")
+        for tool in (
+            "jira_create_issue",
+            "jira_add_comment",
+            "jira_transition_issue",
+            "jira_new_tool_of_a_later_version",
+        ):
+            with self.subTest(tool=tool):
+                self.assertEqual(JIRA_POLICY.classify(tool), "denied")
+
+    def test_classify_confluence(self) -> None:
+        self.assertEqual(CONFLUENCE_POLICY.classify("confluence_get_page"), "read")
+        self.assertEqual(CONFLUENCE_POLICY.classify("confluence_download_attachment"), "read")
+        for tool in (
+            "confluence_update_page",
+            "confluence_upload_attachments",
+            "confluence_new_tool_of_a_later_version",
+        ):
+            with self.subTest(tool=tool):
+                self.assertEqual(CONFLUENCE_POLICY.classify(tool), "write")
+        for tool in ("confluence_delete_page", "confluence_move_page", "confluence_set_page_restrictions"):
+            with self.subTest(tool=tool):
+                self.assertEqual(CONFLUENCE_POLICY.classify(tool), "denied")
+
+    def test_policies_follow_the_rules_of_the_dev_profile(self) -> None:
+        """A tool denied by settings.json is refused by the gateway, a tool that asks for confirmation is a write."""
+        settings = json.loads((Path(__file__).parents[1] / "profiles/dev/settings.json").read_text(encoding="utf-8"))
+        for kind, expected in (("deny", "denied"), ("ask", "write")):
+            for rule in settings["permissions"][kind]:
+                server, _, tool = rule.removeprefix("mcp__").partition("__")
+                if not rule.startswith("mcp__") or server not in POLICIES:
+                    continue
+                # A rule that ends with * stands for every tool of that prefix, e.g. a tool of a later version.
+                name = tool.removesuffix("*") + ("_of_a_later_version" if tool.endswith("*") else "")
+                with self.subTest(rule=rule):
+                    self.assertEqual(POLICIES[server].classify(name), expected)
+
 
 class SettingsTest(unittest.TestCase):
     def test_environment(self) -> None:
@@ -168,9 +210,14 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual((settings.idle_seconds, settings.max_seconds, settings.approval_seconds), (600, 3600, 30))
         self.assertEqual((settings.log_file, settings.admin_socket), (Path("/x/g.log"), Path("/x/a.sock")))
         self.assertEqual(Settings.from_environment({}), Settings())
+        routes = parse_routes(
+            "devops=http://claude-mcp-devops:8000/mcp,jira=http://claude-mcp-jira:8000/mcp,"
+            "confluence=http://claude-mcp-confluence:8000/mcp"
+        )
+        self.assertEqual([route.policy for route in routes], [DEVOPS_POLICY, JIRA_POLICY, CONFLUENCE_POLICY])
 
     def test_invalid_routes(self) -> None:
-        for text in ("jira=http://x/mcp", "devops=https://x/mcp", "devops"):
+        for text in ("unknown=http://x/mcp", "devops=https://x/mcp", "devops"):
             with self.subTest(text=text), self.assertRaisesRegex(ValueError, "invalid route"):
                 parse_routes(text)
         self.assertEqual(parse_routes(" , "), ())
@@ -192,6 +239,15 @@ class SummarizeTest(unittest.TestCase):
         long_text = details({"text": "x" * 5000})
         self.assertTrue(long_text.endswith("characters in all)"))
         self.assertLess(len(long_text), 4100)
+        # An encoded file is shown by its length, so that the other arguments stay visible.
+        attachment = details({"content_base64": "A" * 50000, "content_id": "123", "filename": "a.png"})
+        self.assertEqual(
+            attachment,
+            '{\n  "content_base64": "(50000 characters of base64)",\n  "content_id": "123",\n  "filename": "a.png"\n}',
+        )
+        self.assertEqual(
+            summarize({"content_base64": "A" * 10, "new_content": "x", "filename": "a.png"}), "filename=a.png"
+        )
 
     def test_without_denied_tools(self) -> None:
         expected = [{"name": "devops_work_item_get"}]
@@ -294,6 +350,15 @@ class CheckTest(GatewayTestCase):
         self.gateway.allow("devops")
         refusal = self.gateway.check(self.route, tool_call("devops_work_item_delete", id=1))
         self.assertEqual(refusal, "the tool devops_work_item_delete is refused by the MCP gateway")
+
+    def test_write_on_a_read_only_route_is_refused_without_approval(self) -> None:
+        route = Route("jira", "http://127.0.0.1:1/mcp", JIRA_POLICY)
+        gateway = self.make_gateway(route, approval_seconds=5)
+        gateway.allow("jira")
+        refusal = gateway.check(route, tool_call("jira_create_issue", project_key="SIS2"))
+        self.assertEqual(refusal, "the tool jira_create_issue is refused by the MCP gateway")
+        self.assertEqual(gateway.approvals.pending_lines(), [])
+        self.assertIsNone(gateway.check(route, tool_call("jira_get_issue", issue_key="SIS2-472")))
 
     def test_closed_group(self) -> None:
         refusal = self.gateway.check(self.route, tool_call("devops_work_item_get", work_item_id=1))
