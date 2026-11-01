@@ -34,6 +34,8 @@ import json
 import logging
 import os
 import re
+import select
+import socket
 import sys
 import threading
 import time
@@ -634,6 +636,12 @@ class GatewayHandler(BaseHTTPRequestHandler):
         if refusal is not None:
             self._reply_tool_error(request, refusal)
             return
+        method = cast("dict[str, object]", request).get("method") if isinstance(request, dict) else None
+        if method == "tools/call" and self._client_gone():
+            # e.g. a write approved after the agent gave the call up (Esc in Claude Code): never run unknown to it.
+            LOGGER.info("%s call not forwarded: the agent closed its connection while the call was waiting", route.name)
+            self.close_connection = True
+            return
         lists_tools = isinstance(request, dict) and cast("dict[str, object]", request).get("method") == "tools/list"
         self._forward(route, body, filter_tools=lists_tools)
 
@@ -659,6 +667,14 @@ class GatewayHandler(BaseHTTPRequestHandler):
         if route is None:
             self._reply_before_body(HTTPStatus.NOT_FOUND, "unknown path")
         return route
+
+    def _client_gone(self) -> bool:
+        """Return whether the agent closed its connection: a closed socket is readable, with nothing to read."""
+        try:
+            readable, _, _ = select.select([self.connection], [], [], 0)
+            return bool(readable) and self.connection.recv(1, socket.MSG_PEEK) == b""
+        except OSError:
+            return True
 
     def _forward(self, route: Route, body: bytes | None, *, filter_tools: bool = False) -> None:
         upstream = urlsplit(route.upstream)

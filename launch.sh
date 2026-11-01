@@ -335,13 +335,19 @@ _claude_gateway_routes(){
 
 # Starts the MCP gateway (see README, "MCP gateway") unless it's running: on the network of the agents, which reach
 # it at http://claude-gateway:8090/mcp/<name>, and on the network of each MCP server created so far (claude_mcp
-# connects it to the networks created later). It holds no secret:
-# its groups (devops, jira, confluence) and the waiting write calls are lost when it restarts, every group is then closed. It doesn't
-# start the MCP containers (claude_mcp), nor is it started by claude_dev.
+# connects it to the networks created later). It holds no secret: its groups (devops, jira, confluence) and the
+# waiting write calls are lost when it restarts, every group is then closed. A gateway started from an older image, or
+# with other routes (e.g. a server added to launch.sh), is restarted. It doesn't start the MCP containers (claude_mcp),
+# nor is it started by claude_dev.
 claude_gateway(){
     _claude_network || return
     if _claude_outdated claude-gateway; then
         echo "The image was rebuilt: the MCP gateway is restarted on the new image."
+        docker stop claude-gateway >/dev/null
+    elif _claude_running claude-gateway \
+      && ! docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' claude-gateway \
+        | grep -qxF "GATEWAY_ROUTES=$(_claude_gateway_routes)"; then
+        echo "The MCP servers changed: the MCP gateway is restarted with the new routes."
         docker stop claude-gateway >/dev/null
     fi
     if _claude_running claude-gateway; then
@@ -393,7 +399,9 @@ claude_gateway_stop(){
 # HTTP, it refuses by default a request that brings no credentials of its own (ALLOW_GLOBAL_CRED_FALLBACK): here, only
 # the gateway reaches it, which forwards no credential header. Jira is read only (--read-only, and the gateway refuses
 # any other tool). Confluence reads the files of content_file, file_path and file_paths only under its working folder,
-# the drop folder of /shared, mounted read only at the same path as in the agent.
+# the drop folder of /shared, mounted read only at the same path as in the agent. mcp-atlassian gets its token through
+# --env-file (MCP_SECRET_FILE=1): the check of a path and the opening of the file are two steps, so a file of the drop
+# folder replaced by a symbolic link in between could make it read its own initial environment.
 _claude_mcp_spec(){
     local atlassian="mcp-atlassian --transport streamable-http --host 0.0.0.0 --port 8000"
     case "$1" in
@@ -405,12 +413,12 @@ _claude_mcp_spec(){
         jira)
             printf '%s\n' "$atlassian --read-only" JIRA_PERSONAL_TOKEN 8000 \
               -e JIRA_URL=https://intranet.jira.bfs.admin.ch/jira \
-              -e TOOLSETS=all -e ALLOW_GLOBAL_CRED_FALLBACK=true
+              -e TOOLSETS=all -e ALLOW_GLOBAL_CRED_FALLBACK=true -e MCP_SECRET_FILE=1
             ;;
         confluence)
             printf '%s\n' "$atlassian" CONFLUENCE_PERSONAL_TOKEN 8000 \
               -e CONFLUENCE_URL=https://intranet.confluence.bfs.admin.ch/confluence \
-              -e TOOLSETS=all -e ALLOW_GLOBAL_CRED_FALLBACK=true \
+              -e TOOLSETS=all -e ALLOW_GLOBAL_CRED_FALLBACK=true -e MCP_SECRET_FILE=1 \
               -v "$AGENT_MCP_CONFLUENCE_DIR:/shared/mcp-confluence:ro" -w /shared/mcp-confluence
             ;;
         *)
@@ -461,10 +469,18 @@ claude_mcp(){
     if [ "$name" = confluence ]; then
         mkdir -p "$AGENT_MCP_CONFLUENCE_DIR" || return
     fi
-    # The server waits for its token (at most a minute), reads it, removes the file, then replaces the shell.
+    # The server waits for its token (at most a minute), then replaces the shell. With MCP_SECRET_FILE=1, the token is
+    # handed through a file of settings (--env-file), loaded by the server and removed once it listens, so that it's
+    # never in the initial environment of the server (/proc/self/environ), which a tool reading files could reach.
+    # Otherwise it's exported to the server.
     local start_script='
         for i in $(seq 300); do [ -s /tmp/mcp-token ] && break; sleep 0.2; done
         [ -s /tmp/mcp-token ] || { echo "no token received" >&2; exit 1; }
+        if [ "${MCP_SECRET_FILE:-0}" = 1 ]; then
+            (umask 077; printf "%s=%s\n" "$MCP_SECRET_NAME" "$(cat /tmp/mcp-token)" > /tmp/mcp-env)
+            rm -f /tmp/mcp-token
+            exec $MCP_COMMAND --env-file /tmp/mcp-env
+        fi
         export "$MCP_SECRET_NAME=$(cat /tmp/mcp-token)"
         rm -f /tmp/mcp-token
         exec $MCP_COMMAND'
@@ -493,6 +509,12 @@ claude_mcp(){
         return 1
     fi
     _claude_mcp_wait "$container" "${spec[2]}" || return
+    # The server has loaded its file of settings before it listens: the token now only stays in its memory.
+    if ! docker exec "$container" rm -f /tmp/mcp-env; then
+        echo "The settings file of the MCP server $name couldn't be removed: the server is stopped." >&2
+        docker stop "$container" >/dev/null 2>&1; docker rm "$container" >/dev/null 2>&1
+        return 1
+    fi
     echo "MCP server $name started."
 }
 

@@ -1,6 +1,7 @@
 import http.client
 import io
 import json
+import socket
 import tempfile
 import threading
 import unittest
@@ -540,6 +541,30 @@ class HttpTest(GatewayTestCase):
         response = connection.getresponse()
         response.read()
         self.assertEqual(response.status, 200)
+
+    def test_write_given_up_by_the_agent_is_not_forwarded(self) -> None:
+        """A write approved after the agent closed its connection doesn't reach the MCP server."""
+        self.gateway.allow("devops")
+        body = json.dumps(tool_call("devops_work_item_update", work_item_id=1)).encode()
+        client = socket.create_connection(("127.0.0.1", self.port), timeout=10)
+        client.sendall(
+            b"POST /mcp/devops HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
+            + f"Content-Length: {len(body)}\r\n\r\n".encode()
+            + body
+        )
+        with self.assertLogs("claude-gateway", "INFO") as logs:
+            for _ in range(500):
+                if self.gateway.approvals.pending_lines():
+                    break
+                threading.Event().wait(0.01)
+            client.close()
+            self.gateway.approvals.decide([], approve=True)
+            for _ in range(500):
+                if any("not forwarded" in line for line in logs.output):
+                    break
+                threading.Event().wait(0.01)
+        self.assertTrue(any("not forwarded" in line for line in logs.output), logs.output)
+        self.assertEqual([body for _, body, _ in FakeMcp.received if "tools/call" in body], [])
 
     def test_unreachable_mcp_server(self) -> None:
         route = Route("devops", "http://127.0.0.1:1/mcp", DEVOPS_POLICY)
