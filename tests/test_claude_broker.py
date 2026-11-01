@@ -12,9 +12,9 @@ from http import HTTPStatus
 from pathlib import Path
 from unittest import mock
 
+import access
 import claude_broker
 from claude_broker import (
-    AdminServer,
     Broker,
     BrokerError,
     BrokerHTTPServer,
@@ -22,7 +22,6 @@ from claude_broker import (
     Secrets,
     SecretsFileError,
     Settings,
-    format_duration,
     run_admin_command,
 )
 
@@ -177,7 +176,7 @@ class GitCredentialTest(BrokerTestCase):
             self.assertEqual(raised.exception.status, HTTPStatus.FORBIDDEN)
             self.assertIn("claude_secret allow git", str(raised.exception))
         self.assertEqual(self.notifications, ["Autorisation requise pour git"])
-        self.clock.now += claude_broker.NOTIFY_INTERVAL_SECONDS
+        self.clock.now += access.NOTIFY_INTERVAL_SECONDS
         with self.assertRaises(BrokerError):
             self.broker.git_credential(git_request("devops-server.admin.ch"))
         self.assertEqual(len(self.notifications), 2)
@@ -291,17 +290,17 @@ class GroupsTest(BrokerTestCase):
             self.broker.revoke("gti")
 
     def test_status(self) -> None:
-        self.assertEqual(self.broker.status(), "Secret broker: locked\n  git  closed\n  gh   closed")
+        self.assertEqual(self.broker.status(), "Secret broker: locked\n  git        closed\n  gh         closed")
         self.unlock("git")
         self.clock.now += 10 * 60
         status = self.broker.status()
         self.assertIn("unlocked (4 Git tokens", status)
-        self.assertIn("git  open, closes in 20 min (idle limit 20 min, maximum 3 h 50 min)", status)
+        self.assertIn("git        open, closes in 20 min (idle limit 20 min, maximum 3 h 50 min)", status)
 
     def test_load_and_lock_close_every_group(self) -> None:
         self.unlock("git")
         self.broker.load(SECRETS)
-        self.assertIn("git  closed", self.broker.status())
+        self.assertIn("git        closed", self.broker.status())
         self.broker.allow("git")
         self.assertIn("locked", self.broker.lock())
         self.assertFalse(self.broker.unlocked)
@@ -316,44 +315,25 @@ class AdminCommandTest(BrokerTestCase):
         self.assertTrue(run_admin_command(self.broker, {"command": "allow", "args": ["git"]})[0])
         self.assertTrue(run_admin_command(self.broker, {"command": "status"})[0])
         self.assertTrue(run_admin_command(self.broker, {"command": "revoke", "args": ["all"]})[0])
+        self.assertEqual(
+            run_admin_command(self.broker, {"command": "export", "args": ["LATER_PHASE_SECRET"]}), (True, "later")
+        )
         self.assertTrue(run_admin_command(self.broker, {"command": "lock"})[0])
+
+    def test_export_only_type_2_secrets(self) -> None:
+        self.assertEqual(run_admin_command(self.broker, {"command": "export", "args": ["X"]})[0], False)
+        self.unlock()
+        for key in ("GIT_1_PASSWORD", "GH_SPIGES_TOKEN", "MISSING"):
+            with self.subTest(key=key):
+                ok, message = run_admin_command(self.broker, {"command": "export", "args": [key]})
+                self.assertFalse(ok)
+                self.assertIn("no secret", message)
 
     def test_refusals(self) -> None:
         self.assertEqual(run_admin_command(self.broker, {"command": "load", "data": "x"})[0], False)
         self.assertEqual(run_admin_command(self.broker, {"command": "allow"}), (False, "unknown command: allow"))
         self.assertEqual(run_admin_command(self.broker, {"command": "rm", "args": "x"}), (False, "unknown command: rm"))
         self.assertEqual(run_admin_command(self.broker, {"command": 1, "args": [2]}), (False, "unknown command: 1 2"))
-
-
-class FormatDurationTest(unittest.TestCase):
-    def test_format(self) -> None:
-        self.assertEqual(format_duration(-5), "0 min")
-        self.assertEqual(format_duration(59 * 60 + 59), "59 min")
-        self.assertEqual(format_duration(3600), "1 h 00 min")
-        self.assertEqual(format_duration(4 * 3600 - 60), "3 h 59 min")
-
-
-class NotifierTest(unittest.TestCase):
-    def test_without_agent_notify(self) -> None:
-        with mock.patch("shutil.which", return_value=None), mock.patch("threading.Thread") as thread:
-            claude_broker.agent_notifier()("text")
-        thread.assert_not_called()
-
-    def test_with_agent_notify(self) -> None:
-        with mock.patch("shutil.which", return_value="/bin/agent-notify"), mock.patch("subprocess.run") as run:
-            claude_broker.agent_notifier()("Autorisation requise pour git")
-            for thread in threading.enumerate():
-                if thread is not threading.current_thread() and thread.daemon:
-                    thread.join(timeout=5)
-        run.assert_called_once()
-        self.assertEqual(run.call_args.args[0], ["/bin/agent-notify", "Autorisation requise pour git"])
-
-    def test_failure_is_ignored(self) -> None:
-        with mock.patch("shutil.which", return_value="/nonexistent/agent-notify"):
-            claude_broker.agent_notifier()("text")
-            for thread in threading.enumerate():
-                if thread is not threading.current_thread() and thread.daemon:
-                    thread.join(timeout=5)
 
 
 @contextmanager
@@ -412,15 +392,15 @@ class AdminServiceTest(BrokerTestCase):
     def ctl(self, *args: str, stdin: str = "") -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
         with mock.patch("sys.stdin", io.StringIO(stdin)), mock.patch("sys.stdout", out), mock.patch("sys.stderr", err):
-            code = claude_broker.ctl(list(args), self.settings)
+            code = access.run_ctl(list(args), self.settings.admin_socket, "usage", stdin_command="load")
         return code, out.getvalue(), err.getvalue()
 
     def test_not_ready_and_usage(self) -> None:
-        self.assertEqual(self.ctl("status")[0], claude_broker.EXIT_NOT_READY)
+        self.assertEqual(self.ctl("status")[0], access.EXIT_NOT_READY)
         self.assertEqual(self.ctl()[0], 2)
 
     def test_commands_through_the_socket(self) -> None:
-        server = AdminServer(self.settings.admin_socket, self.broker)
+        server = access.AdminServer(self.settings.admin_socket, lambda request: run_admin_command(self.broker, request))
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)
@@ -441,31 +421,13 @@ class AdminServiceTest(BrokerTestCase):
         self.assertFalse(json.loads(answers)["ok"])
 
 
-class LogTest(unittest.TestCase):
-    def test_rotation(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            log_file = Path(directory) / "broker.log"
-            log_file.write_bytes(b"x" * (claude_broker.MAX_LOG_BYTES + 1))
-            claude_broker.configure_log(log_file)
-            handler = claude_broker.LOGGER.handlers[-1]
-            try:
-                claude_broker.LOGGER.info("after rotation")
-            finally:
-                claude_broker.LOGGER.removeHandler(handler)
-                handler.close()
-            self.assertEqual(Path(f"{log_file}.1").stat().st_size, claude_broker.MAX_LOG_BYTES + 1)
-            self.assertRegex(
-                log_file.read_text(encoding="utf-8"), r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ after rotation\n$"
-            )
-
-
 class MainTest(unittest.TestCase):
     def test_usage(self) -> None:
         with mock.patch("sys.stderr", io.StringIO()):
             self.assertEqual(claude_broker.main([]), 2)
 
     def test_ctl(self) -> None:
-        with mock.patch.object(claude_broker, "ctl", return_value=7) as ctl:
+        with mock.patch.object(claude_broker, "run_ctl", return_value=7) as ctl:
             self.assertEqual(claude_broker.main(["ctl", "status"]), 7)
         self.assertEqual(ctl.call_args.args[0], ["status"])
 

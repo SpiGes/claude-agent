@@ -15,28 +15,22 @@ Installed in the image as /usr/local/bin/claude-broker. Usage:
     claude-broker ctl status              prints the state of the broker and of each group
     claude-broker ctl unlocked            exits with 0 when the secrets are loaded, 1 otherwise (3: service not ready)
     claude-broker ctl lock                forgets the secrets and closes every group
+    claude-broker ctl export <KEY>        prints a secret of type 2 (e.g. DEVOPS_PAT), for a container started by the
+                                          host (claude_mcp); never available on the network
 
 Secrets file (one KEY=VALUE per line, as a docker env file; see secrets.example):
     GIT_<n>_URL, GIT_<n>_USERNAME, GIT_<n>_PASSWORD or GIT_<n>_BEARER   a Git token (group "git")
     GH_<NAME>_TOKEN, GH_<NAME>_OWNER                                    a GitHub API token of gh, for one
                                                                         organization or account (group "gh")
     GH_TOKEN                                                            a GitHub API token for any other owner
+    any other KEY                                                       a secret of type 2, only exported to the host
 
 Every request and every command is logged to BROKER_LOG, never with a secret value.
 """
 
-import contextlib
-import json
 import logging
-import logging.handlers
 import os
 import re
-import shutil
-import socket
-import socketserver
-
-# Only runs agent-notify, see _run_quietly.
-import subprocess  # nosec B404
 import sys
 import threading
 import time
@@ -45,17 +39,25 @@ from dataclasses import dataclass, field
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Final, cast, override
+from typing import Final, override
 from urllib.parse import parse_qs, urlsplit
+
+from access import (
+    AdminServer,
+    Clock,
+    Notifier,
+    WindowClosedError,
+    Windows,
+    admin_arguments,
+    agent_notifier,
+    configure_log,
+    format_duration,
+    run_ctl,
+)
 
 GROUPS: Final = ("git", "gh")
 DEFAULT_GIT_USERNAME: Final = "token"
-NOTIFY_INTERVAL_SECONDS: Final = 120.0
 MAX_REQUEST_BYTES: Final = 64 * 1024
-MAX_LOG_BYTES: Final = 1024 * 1024
-SECONDS_PER_MINUTE: Final = 60
-MINUTES_PER_HOUR: Final = 60
-EXIT_NOT_READY: Final = 3
 
 KEY_PATTERN: Final = re.compile(r"[A-Z][A-Z0-9_]*")
 GIT_KEY_PATTERN: Final = re.compile(r"GIT_(\d+)_(URL|USERNAME|PASSWORD|BEARER)")
@@ -65,9 +67,6 @@ GIT_URL_PATTERN: Final = re.compile(r"https://[^/\s]+(/\S*)?")
 GH_OWNER_PATTERN: Final = re.compile(r"[A-Za-z0-9._-]{1,100}")
 
 LOGGER: Final = logging.getLogger("claude-broker")
-
-type Clock = Callable[[], float]
-type Notifier = Callable[[str], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -233,49 +232,32 @@ def _gh_entries(fields_by_name: Mapping[str, Mapping[str, str]], errors: list[st
     return tuple(entries)
 
 
-def agent_notifier() -> Notifier:
-    """Spoken notification through agent-notify, sent in the background; nothing when it isn't installed."""
-    command = shutil.which("agent-notify")
-
-    def notify(text: str) -> None:
-        if command is not None:
-            threading.Thread(target=_run_quietly, args=([command, text],), daemon=True).start()
-
-    return notify
-
-
-def _run_quietly(command: list[str]) -> None:
-    with contextlib.suppress(OSError, subprocess.SubprocessError):
-        # A program found in the PATH of the image at startup; the text is one argument, without a shell.
-        subprocess.run(  # noqa: S603  # nosec B603
-            command, check=False, timeout=10, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        )
-
-
 class Broker:
     """State of the broker (secrets, open groups), shared by the service and the commands of the host."""
 
     def __init__(self, settings: Settings, clock: Clock = time.monotonic, notifier: Notifier | None = None) -> None:
         """Start locked, without any open group."""
-        self._settings = settings
-        self._clock = clock
-        self._notifier = notifier if notifier is not None else agent_notifier()
         self._lock = threading.Lock()
         self._secrets: Secrets | None = None
-        self._opened: dict[str, float] = {}
-        self._last_used: dict[str, float] = {}
-        self._last_notified: dict[str, float] = {}
+        self.windows = Windows(
+            GROUPS,
+            idle_seconds=settings.idle_seconds,
+            max_seconds=settings.max_seconds,
+            clock=clock,
+            notifier=notifier if notifier is not None else agent_notifier(),
+            on_close=lambda group, reason: LOGGER.info("group %s closed (%s)", group, reason),
+        )
 
     @property
     def unlocked(self) -> bool:
-        """True when the secrets are loaded."""
+        """Return True when the secrets are loaded."""
         with self._lock:
             return self._secrets is not None
 
     # --- Service ----------------------------------------------------------------------------------------
 
     def git_credential(self, request: str) -> tuple[str, str]:
-        """Answers a `get` request of the Git credential protocol; returns the answer and what it was for."""
+        """Answer a `get` request of the Git credential protocol; return the answer and what it was for."""
         fields: dict[str, str] = {}
         capabilities: set[str] = set()
         for line in request.splitlines():
@@ -288,10 +270,7 @@ class Broker:
         if fields.get("protocol") != "https" or not host:
             raise BrokerError(HTTPStatus.BAD_REQUEST, "only https URLs are served")
         url = f"https://{host}/{fields.get('path', '')}".rstrip("/")
-
-        with self._lock:
-            secrets = self._use("git")
-            matches = [entry for entry in secrets.git if entry.covers(url)]
+        matches = [entry for entry in self._use("git").git if entry.covers(url)]
         if not matches:
             raise BrokerError(HTTPStatus.NOT_FOUND, f"no Git token in the secrets file for {url}")
         entry = max(matches, key=lambda candidate: len(candidate.url))
@@ -305,8 +284,7 @@ class Broker:
         """
         if owner and not GH_OWNER_PATTERN.fullmatch(owner):
             raise BrokerError(HTTPStatus.BAD_REQUEST, "invalid owner")
-        with self._lock:
-            entries = self._use("gh").gh
+        entries = self._use("gh").gh
         if not entries:
             raise BrokerError(HTTPStatus.NOT_FOUND, "no GitHub API token in the secrets file")
         if owner:
@@ -326,6 +304,20 @@ class Broker:
             raise BrokerError(HTTPStatus.BAD_REQUEST, message)
         return matches[0].token, f"{owner or '(no owner)'} ({matches[0].name})"
 
+    def _use(self, group: str) -> Secrets:
+        """Check that the secrets are loaded and the group open, and record the use."""
+        with self._lock:
+            secrets = self._secrets
+        if secrets is None:
+            self.windows.notify_once("locked", "Le courtier est verrouillé")
+            message = "the secret broker is locked: run `claude_broker` on the host to unlock it"
+            raise BrokerError(HTTPStatus.LOCKED, message)
+        try:
+            self.windows.use(group)
+        except WindowClosedError as error:
+            raise BrokerError(HTTPStatus.FORBIDDEN, str(error)) from error
+        return secrets
+
     # --- Commands of the host ---------------------------------------------------------------------------
 
     def load(self, text: str) -> str:
@@ -333,118 +325,59 @@ class Broker:
         secrets = Secrets.parse(text)
         with self._lock:
             self._secrets = secrets
-            self._opened.clear()
-            self._last_used.clear()
+        self.windows.close_all()
         LOGGER.info("unlocked (%s)", secrets.summary)
         return f"Secret broker unlocked: {secrets.summary}."
 
     def lock(self) -> str:
-        """Forgets the secrets and closes every group."""
+        """Forget the secrets and close every group."""
         with self._lock:
             self._secrets = None
-            self._opened.clear()
-            self._last_used.clear()
+        self.windows.close_all()
         LOGGER.info("locked")
         return "Secret broker locked: secrets forgotten, every group closed."
 
     def allow(self, group: str) -> str:
         """Open a group."""
-        _check_group(group, allow_all=False)
-        with self._lock:
-            if self._secrets is None:
-                message = "the secret broker is locked: run `claude_broker` first"
-                raise ValueError(message)
-            now = self._clock()
-            self._opened[group] = now
-            self._last_used[group] = now
+        self.windows.check_group(group, allow_all=False)
+        if not self.unlocked:
+            message = "the secret broker is locked: run `claude_broker` first"
+            raise ValueError(message)
+        message = self.windows.open(group)
         LOGGER.info("group %s opened", group)
-        return (
-            f"Group '{group}' open: it closes after {format_duration(self._settings.idle_seconds)} without use, "
-            f"and in {format_duration(self._settings.max_seconds)} at the latest."
-        )
+        return message
 
     def revoke(self, group: str) -> str:
         """Close a group, or every group (`all`)."""
-        _check_group(group, allow_all=True)
-        with self._lock:
-            groups = list(self._opened) if group == "all" else [group]
-            for name in groups:
-                if self._opened.pop(name, None) is not None:
-                    del self._last_used[name]
-                    LOGGER.info("group %s closed (revoked)", name)
-        return "Closed: " + (", ".join(groups) if groups else "no open group")
+        closed = self.windows.revoke(group)
+        return "Closed: " + (", ".join(closed) if closed else "no open group")
 
     def status(self) -> str:
-        """State of the broker and time left for each group."""
+        """Return the state of the broker and the time left for each group."""
         with self._lock:
-            now = self._clock()
-            self._close_expired(now)
             secrets = self._secrets
-            lines = [f"Secret broker: unlocked ({secrets.summary})" if secrets else "Secret broker: locked"]
-            for group in GROUPS:
-                if group in self._opened:
-                    idle_left = self._settings.idle_seconds - (now - self._last_used[group])
-                    max_left = self._settings.max_seconds - (now - self._opened[group])
-                    lines.append(
-                        f"  {group:<4} open, closes in {format_duration(min(idle_left, max_left))} "
-                        f"(idle limit {format_duration(idle_left)}, maximum {format_duration(max_left)})"
-                    )
-                else:
-                    lines.append(f"  {group:<4} closed")
-        return "\n".join(lines)
+        first = f"Secret broker: unlocked ({secrets.summary})" if secrets else "Secret broker: locked"
+        return "\n".join([first, *self.windows.status_lines()])
 
-    # --- Groups (called with the lock held) -------------------------------------------------------------
-
-    def _close_expired(self, now: float) -> None:
-        for group in list(self._opened):
-            idle = now - self._last_used[group] >= self._settings.idle_seconds
-            if idle or now - self._opened[group] >= self._settings.max_seconds:
-                del self._opened[group]
-                del self._last_used[group]
-                LOGGER.info("group %s closed (%s)", group, "idle" if idle else "maximum time")
-
-    def _use(self, group: str) -> Secrets:
-        """Check that the secrets are loaded and the group open, and record the use."""
-        now = self._clock()
-        self._close_expired(now)
-        if self._secrets is None:
-            self._notify_once("locked", "Le courtier est verrouillé", now)
-            message = "the secret broker is locked: run `claude_broker` on the host to unlock it"
-            raise BrokerError(HTTPStatus.LOCKED, message)
-        if group not in self._opened:
-            self._notify_once(group, f"Autorisation requise pour {group}", now)
-            message = f"group '{group}' is closed: run `claude_secret allow {group}` on the host"
-            raise BrokerError(HTTPStatus.FORBIDDEN, message)
-        self._last_used[group] = now
-        return self._secrets
-
-    def _notify_once(self, key: str, text: str, now: float) -> None:
-        """At most one notification per NOTIFY_INTERVAL_SECONDS for the same key."""
-        last = self._last_notified.get(key)
-        if last is None or now - last >= NOTIFY_INTERVAL_SECONDS:
-            self._last_notified[key] = now
-            self._notifier(text)
-
-
-def _check_group(group: str, *, allow_all: bool) -> None:
-    if group not in GROUPS and not (allow_all and group == "all"):
-        names = ", ".join(GROUPS) + (", or all" if allow_all else "")
-        message = f"unknown group '{group}' (groups: {names})"
-        raise ValueError(message)
-
-
-def format_duration(seconds: float) -> str:
-    """Duration in minutes, or in hours and minutes from one hour."""
-    minutes = max(0, int(seconds // SECONDS_PER_MINUTE))
-    hours, rest = divmod(minutes, MINUTES_PER_HOUR)
-    return f"{hours} h {rest:02d} min" if hours else f"{minutes} min"
+    def export(self, key: str) -> str:
+        """Return a secret of type 2 (neither a Git nor a GitHub token), for a container started by the host."""
+        with self._lock:
+            secrets = self._secrets
+        if secrets is None:
+            message = "the secret broker is locked: run `claude_broker` first"
+            raise ValueError(message)
+        value = secrets.others.get(key)
+        if value is None:
+            message = f"no secret {key} of type 2 in the secrets file"
+            raise ValueError(message)
+        LOGGER.info("secret %s exported to the host", key)
+        return value
 
 
 def run_admin_command(broker: Broker, request: Mapping[str, object]) -> tuple[bool, str]:
     """Run a command of the host (`ctl`); return whether it succeeded and its message."""
     command = request.get("command")
-    raw_args = request.get("args", [])
-    args = [str(arg) for arg in cast("list[object]", raw_args)] if isinstance(raw_args, list) else []
+    args = admin_arguments(request)
     if command == "unlocked":
         unlocked = broker.unlocked
         return unlocked, "unlocked" if unlocked else "locked"
@@ -453,12 +386,16 @@ def run_admin_command(broker: Broker, request: Mapping[str, object]) -> tuple[bo
         "lock": broker.lock,
         "status": broker.status,
     }
-    with_group: dict[str, Callable[[str], str]] = {"allow": broker.allow, "revoke": broker.revoke}
+    with_argument: dict[str, Callable[[str], str]] = {
+        "allow": broker.allow,
+        "revoke": broker.revoke,
+        "export": broker.export,
+    }
     try:
         if isinstance(command, str) and command in without_argument and not args:
             return True, without_argument[command]()
-        if isinstance(command, str) and command in with_group and len(args) == 1:
-            return True, with_group[command](args[0])
+        if isinstance(command, str) and command in with_argument and len(args) == 1:
+            return True, with_argument[command](args[0])
     except ValueError as error:
         return False, str(error)
     return False, f"unknown command: {command} {' '.join(args)}".rstrip()
@@ -537,57 +474,11 @@ class ServiceHandler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
 
-class AdminServer(socketserver.ThreadingUnixStreamServer):
-    """Commands of the host (claude_secret, claude_broker), on a Unix socket inside the broker container."""
-
-    daemon_threads = True
-
-    def __init__(self, path: Path, broker: Broker) -> None:
-        """Serve the commands of `broker` on the socket `path`, readable by its owner only."""
-        self.broker = broker
-        super().__init__(str(path), AdminHandler)
-        path.chmod(0o600)
-
-
-class AdminHandler(socketserver.StreamRequestHandler):
-    """One JSON line per command, one JSON line per answer."""
-
-    @override
-    def handle(self) -> None:
-        server = self.server
-        if not isinstance(server, AdminServer):  # pragma: no cover - set by AdminServer
-            message = "the handler needs an AdminServer"
-            raise TypeError(message)
-        try:
-            request: object = json.loads(self.rfile.readline())
-        except json.JSONDecodeError as error:
-            ok, message = False, f"invalid request: {error}"
-        else:
-            ok, message = (
-                run_admin_command(server.broker, cast("dict[str, object]", request))
-                if isinstance(request, dict)
-                else (False, "invalid request: a JSON object is expected")
-            )
-        self.wfile.write((json.dumps({"ok": ok, "message": message}) + "\n").encode("utf-8"))
-
-
-def configure_log(log_file: Path) -> None:
-    """Log to `log_file` in UTC; above MAX_LOG_BYTES, the log becomes `<log_file>.1` (replacing the previous one)."""
-    handler = logging.handlers.RotatingFileHandler(log_file, maxBytes=MAX_LOG_BYTES, backupCount=1, encoding="utf-8")
-    formatter = logging.Formatter("%(asctime)s %(message)s", datefmt="%Y-%m-%dT%H:%M:%SZ")
-    formatter.converter = time.gmtime
-    handler.setFormatter(formatter)
-    LOGGER.addHandler(handler)
-    LOGGER.setLevel(logging.INFO)
-
-
 def serve(settings: Settings) -> None:
     """Run the service and the commands of the host until the container stops."""
-    configure_log(settings.log_file)
+    configure_log(LOGGER, settings.log_file)
     broker = Broker(settings)
-    settings.admin_socket.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    settings.admin_socket.unlink(missing_ok=True)
-    admin = AdminServer(settings.admin_socket, broker)
+    admin = AdminServer(settings.admin_socket, lambda request: run_admin_command(broker, request))
     threading.Thread(target=admin.serve_forever, daemon=True).start()
     LOGGER.info(
         "started (idle limit %s, maximum %s); locked",
@@ -598,37 +489,15 @@ def serve(settings: Settings) -> None:
     BrokerHTTPServer(("0.0.0.0", settings.port), broker).serve_forever()  # noqa: S104  # nosec B104
 
 
-def ctl(args: Sequence[str], settings: Settings) -> int:
-    """Send a command to the running service; return the exit code of the command."""
-    if not args:
-        print(__doc__, file=sys.stderr)
-        return 2
-    request: dict[str, object] = {"command": args[0], "args": list(args[1:])}
-    if args[0] == "load":
-        request["data"] = sys.stdin.read()
-    try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-            client.connect(str(settings.admin_socket))
-            client.sendall((json.dumps(request) + "\n").encode("utf-8"))
-            response = json.loads(client.makefile("r", encoding="utf-8").readline())
-    except OSError as error:
-        print(f"claude-broker: service not ready ({error})", file=sys.stderr)
-        return EXIT_NOT_READY
-    ok = bool(response["ok"])
-    if args[0] != "unlocked":
-        print(response["message"], file=sys.stdout if ok else sys.stderr)
-    return 0 if ok else 1
-
-
 def main(argv: Sequence[str] | None = None) -> int:
-    """Entry point: `serve` or `ctl <command>`."""
+    """Run `serve` or `ctl <command>`."""
     args = list(sys.argv[1:] if argv is None else argv)
     settings = Settings.from_environment()
     if args[:1] == ["serve"]:
         serve(settings)
         return 0
     if args[:1] == ["ctl"]:
-        return ctl(args[1:], settings)
+        return run_ctl(args[1:], settings.admin_socket, __doc__ or "", stdin_command="load")
     print(__doc__, file=sys.stderr)
     return 2
 

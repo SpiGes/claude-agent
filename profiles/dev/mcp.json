@@ -8,11 +8,8 @@
       }
     },
     "devops": {
-      "command": "mcp-devops-onpremise",
-      "env": {
-        "DEVOPS_API_URL": "https://devops-server.admin.ch/DefaultCollection/BFS_SIS",
-        "DEVOPS_PAT": "${DEVOPS_PAT}"
-      }
+      "type": "http",
+      "url": "http://claude-gateway:8090/mcp/devops"
     }
   }
 }
