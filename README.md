@@ -309,7 +309,9 @@ With the voice input enabled, every process of the container can record the micr
 | `claude_notify_speech_stop` | Stops the speech relay of the speech notifications (see "Optional: speech notifications"); the next launch of an agent starts it again |
 | `claude_voice_on` / `claude_voice_off` | Enables or disables the voice input (microphone) for the next launches of an agent (see "Voice input") |
 | `claude_broker` / `claude_broker_stop` | Starts and unlocks the secret broker, or stops it (see "Secret broker"); `claude_dev` starts it when needed |
-| `claude_secret allow <group>` | Opens a group of secrets for the agent (`git`, `gh`); also `revoke <group>\|all`, `status`, `log`, `edit` (see "Secret broker") |
+| `claude_secret allow <group>` | Opens a group: `git`, `gh` (secret broker), `devops` (MCP gateway); also `revoke <group>\|all`, `status`, `pending`, `approve`, `deny`, `log`, `edit` (see "Secret broker", "MCP gateway") |
+| `claude_gateway` / `claude_gateway_stop` | Starts or stops the MCP gateway (see "MCP gateway") |
+| `claude_mcp start\|stop\|restart devops` | Starts, stops, or restarts the container of the Azure DevOps MCP server, with its token from the secret broker; `start` returns once the server accepts connections (see "MCP gateway") |
 
 Each command starts a new container, removed on exit (--rm); nothing needs to be stopped or cleaned up by hand. Several agents can run at the same time, see "Several agents at the same time" below.
 
@@ -361,6 +363,7 @@ One `KEY=VALUE` per line, as a docker env file (no quotes, no space around `=`),
 | `GIT_<n>_BEARER` | Token sent as a Bearer token (Bitbucket) |
 | `GH_<NAME>_TOKEN`, `GH_<NAME>_OWNER` | GitHub API token of `gh` for one organization or account (e.g. `GH_SPIGES_TOKEN` and `GH_SPIGES_OWNER=SpiGes`) |
 | `GH_TOKEN` | GitHub API token of `gh` for any other owner (optional) |
+| any other key, e.g. `DEVOPS_PAT` | Secret of type 2: never handed out on the network, only exported to the host (`claude-broker ctl export`) for the container of an MCP server (see "MCP gateway") |
 
 ### Usage
 
@@ -381,6 +384,44 @@ For an installation from before the broker: the Git tokens of `.env` (`GIT_CONFI
 - While a group is open, any process of the agent container can ask the broker for its tokens, like Git does: the broker limits how long the tokens are reachable, not who asks within the container.
 - A token given to Git or `gh` is in the memory of that process while it runs.
 - The broker and the secrets file are protected from the agent container, not from a compromised WSL2 or Windows.
+
+## MCP gateway
+
+The Azure DevOps MCP server doesn't run in the agent container, and its token (`DEVOPS_PAT`) isn't in the environment of the agent. It runs in a container of its own, with its token only, and the agent reaches it through a gateway that checks every tool call.
+
+```
+agent container ──► claude-gateway ──► claude-mcp-devops (DEVOPS_PAT) ──► Azure DevOps Server
+                   (groups, approvals)  (network of its own, shared with the gateway only)
+```
+
+### How it works
+
+- **Containers without coupling**: `claude_gateway` starts the gateway, `claude_mcp start devops` the MCP server; neither starts the other, and `claude_dev` starts neither. A missing container only makes the calls that need it fail, with the command to run. After a restart of Docker, `claude_mcp start devops` is run again (the gateway restarts by itself, with every group closed).
+- **Networks**: the gateway is on the network of the agents (`http://claude-gateway:8090/mcp/devops`, the `devops` server of `profiles/dev/mcp.json`). Each MCP server has a Docker network of its own, `<AGENT_MCP_NETWORK_PREFIX>-<server>` (default `bfs-claude-agent-mcp-devops`), whose only members are its container and the gateway; the server reaches Azure DevOps through it. The MCP server has no authentication: Docker isolates the networks from each other, so neither the agent, nor another MCP container, nor a container started without `--network` reaches it. `claude_mcp start` creates the network and connects the gateway when it runs; `claude_gateway` connects to the networks created before it.
+- **Token**: `DEVOPS_PAT` is a secret of type 2 of the secrets file of the broker. The broker never hands it out on the network: `claude_mcp start` reads it through `docker exec` (`claude-broker ctl export`), and writes it straight into the tmpfs of the MCP container, through a pipe between two `docker exec`. The server reads it and removes the file: the token is neither on a disk nor in the configuration of the container (`docker inspect`), only in the memory of the server.
+- **Requests that always go through**: the opening of the session (`initialize`, notifications, `tools/list`), the stream of the server (`GET`), and the end of the session (`DELETE`), so that Claude Code lists the tools from its start. The streamed answers (server-sent events) are forwarded as they come.
+- **Tool calls**: a tool refused by the gateway (the deny rules of `settings.json`: deletion, wiki, repository) is removed from the answer of `tools/list`, and refused if it's called anyway; a read tool (an explicit list in `broker/claude_gateway.py`) goes through while the `devops` group is open; **any other tool, including an unknown or new one, is a write**: it goes through while the group is open, and only once approved on the host. A refusal reaches the agent as a tool error, with the command to run.
+- **Approvals**: a write call waits, with a spoken notification ("passerelle: Écriture DevOps à approuver : <tool>"). `claude_secret approve` approves the oldest waiting call (`approve <id>` another one); `claude_secret pending` lists them with their full arguments, e.g. the text of a comment, so that the approval is given on what is written. `claude_secret approve --tool 5m` also approves the next calls of the same tool for 5 minutes, e.g. the comments of a review; closing the group (`revoke`, idle or maximum time) ends it; `claude_secret deny` refuses. Without a decision within `GATEWAY_APPROVAL_SECONDS` (default 120), the call is refused. Claude Code still asks its own confirmation before a write: it guards against the agent itself, the approval of the gateway against any process of the agent container that would call the MCP server without Claude Code.
+- **Groups**: the gateway holds the `devops` group itself, with the idle and maximum times of the broker (`BROKER_IDLE_MINUTES`, `BROKER_MAX_HOURS`). For this group, opening a window doesn't hand any token to the agent: it lets the gateway forward the tool calls of the agent.
+- **Hardened containers**: no capability, no privilege escalation, read-only file system, no workspace. The gateway holds no secret.
+- **Log**: every tool call (tool, main arguments, decision) to `$AGENT_GATEWAY_LOG_DIR/gateway.log` (default `~/.claude-agent-homes/gateway`), never the content written (text of a comment, field values) nor a secret value.
+
+### Setup
+
+1. `DEVOPS_PAT=<PAT>` is added to the secrets file (`claude_secret edit`), and removed from `.env`.
+2. The image is rebuilt, then: `claude_broker` (unlock), `claude_gateway`, `claude_mcp start devops`.
+3. `claude_dev`; when the gateway or the MCP container started after the agent, `/mcp` in Claude Code reconnects the `devops` server.
+
+### Usage
+
+```bash
+claude_secret allow devops          # the agent may call the Azure DevOps tools
+claude_secret pending               # waiting write calls, with their full arguments
+claude_secret approve               # approves the oldest one
+claude_secret approve --tool 5m     # ... and the next calls of the same tool for 5 minutes
+claude_secret deny                  # refuses the oldest one
+claude_mcp restart devops           # e.g. after a new PAT in the secrets file
+```
 
 ## Several agents at the same time
 
@@ -440,7 +481,7 @@ Changing a profile does not require rebuilding the image (docker build); these f
 The dev profile's `mcp.json` currently declares two MCP servers, each documented in its own appendix in the specs repository:
 
 - **confluence**: reads and writes Confluence Data Center pages directly from Markdown, instead of the manual copy-paste workflow. Its Personal Access Token cannot be scoped down and keeps the full rights of the account that created it, so `settings.json` adds a compensating boundary: page deletion, page moves, and restriction changes are denied outright, and every other write (create, update, add a comment or attachment, and so on) asks for confirmation first.
-- **devops**: reads pull requests, their comment threads, and work items directly from the on-premises Azure DevOps Server. Its Personal Access Token is scoped to read-only, so the write tools already fail at the server; `settings.json` still denies the outright destructive ones (deletion, wiki, repository operations) and asks before every other write, so a failing attempt is caught before the call is even made.
+- **devops**: reads and writes pull requests, their comment threads, and work items of the on-premises Azure DevOps Server. It doesn't run in the agent container: the agent reaches it through the MCP gateway (see "MCP gateway"), which lets the read tools through while the `devops` group is open, and every write tool only once approved on the host. `settings.json` still denies the outright destructive tools (deletion, wiki, repository operations) and asks before the other writes.
 
 ### Adding a new profile
 
@@ -467,7 +508,9 @@ bfs-claude-agent/
     agent-memory-sync        (copied into the image)
     agent-memory-guard       (copied into the image)
   broker/                    (copied into the image)
+    access.py                (windows, notifications and commands of the host, shared by the broker and the gateway)
     claude_broker.py         (service of the secret broker, /usr/local/bin/claude-broker)
+    claude_gateway.py        (service of the MCP gateway, /usr/local/bin/claude-gateway)
     git_credential_broker.py (Git credential helper of the agent, /usr/local/bin/git-credential-broker)
     gh                       (wrapper of the GitHub CLI)
     secrets.example          (template of the secrets file)
