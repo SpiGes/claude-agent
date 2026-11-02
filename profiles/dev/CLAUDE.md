@@ -98,7 +98,8 @@ To save tokens, prefer these over a full Read + manual scan/edit when they fit:
 ## Container environment variables
 
 Skills and their scripts read the variables of the container `.env` file by name (e.g.
-`SPIGES_ORACLE_*`, `SPIGES_BACKEND_SETTINGS_DIR`). A rename breaks them silently until they're run.
+`SPIGES_BACKEND_SETTINGS_DIR`, `SPIGES_POSTGRES_LOCAL_CONNECTION_STRING`). A rename breaks them silently until
+they're run.
 
 - A variable is renamed, added, or removed only together with the skills and scripts that read it
   and with `.env.example` in the claude-agent repository, in the same change. The readers are listed

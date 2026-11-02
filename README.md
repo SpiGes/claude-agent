@@ -501,13 +501,14 @@ Changing a profile does not require rebuilding the image (docker build); these f
 
 ### Optional MCP integrations (dev profile)
 
-The dev profile's `mcp.json` currently declares two MCP servers, each documented in its own appendix in the specs repository:
+The dev profile's `mcp.json` currently declares three MCP servers; confluence and devops are documented in their own appendix in the specs repository:
 
 - **confluence**: reads and writes Confluence Data Center pages directly from Markdown, instead of the manual copy-paste workflow. Its Personal Access Token cannot be scoped down and keeps the full rights of the account that created it, so `settings.json` adds a compensating boundary: page deletion, page moves, and restriction changes are denied outright, and every other write (create, update, add a comment or attachment, and so on) asks for confirmation first. It doesn't run in the agent container either: the agent reaches it through the MCP gateway (see "MCP gateway"), which refuses the same tools and lets every other write through only once approved on the host.
 - **devops**: reads and writes pull requests, their comment threads, and work items of the on-premises Azure DevOps Server. It doesn't run in the agent container: the agent reaches it through the MCP gateway (see "MCP gateway"), which lets the read tools through while the `devops` group is open, and every write tool only once approved on the host. `settings.json` still denies the outright destructive tools (deletion, wiki, repository operations) and asks before the other writes.
 
 ### Adding a new profile
 
+- **sas**: runs commands, uploads, downloads, and SAS programs on the SAS server of REF, for the local `sas-ref` skill. It doesn't run in the agent container: the agent reaches it through the MCP gateway (see "MCP gateway"), which lets `sas_get` through while the `sas` group is open, and every other tool only once approved on the host; `settings.json` also asks for a confirmation of `sas_exec`, `sas_put`, and `sas_run`.
 1. Create `profiles/<name>/CLAUDE.md` and `profiles/<name>/settings.json`, and optionally `profiles/<name>/mcp.json` and `.claude/rules|skills|docs`.
 2. Add a function to `launch.sh`, next to the existing ones:
    ```bash
