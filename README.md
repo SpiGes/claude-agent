@@ -387,13 +387,14 @@ For an installation from before the broker: the Git tokens of `.env` (`GIT_CONFI
 
 ## MCP gateway
 
-The MCP servers of Azure DevOps, Jira, and Confluence don't run in the agent container, and their tokens (`DEVOPS_PAT`, `JIRA_PERSONAL_TOKEN`, `CONFLUENCE_PERSONAL_TOKEN`) aren't in the environment of the agent. Each one runs in a container of its own, with its token only, and the agent reaches them through a gateway that checks every tool call. The same goes for the services written for the agent, as small MCP servers (`broker/mcp_server.py`, standard library only): Keycloak, whose client secrets (`SPIGES_KEYCLOAK_*_CLIENT_SECRET`) only give the skills short-lived tokens.
+The MCP servers of Azure DevOps, Jira, and Confluence don't run in the agent container, and their tokens (`DEVOPS_PAT`, `JIRA_PERSONAL_TOKEN`, `CONFLUENCE_PERSONAL_TOKEN`) aren't in the environment of the agent. Each one runs in a container of its own, with its token only, and the agent reaches them through a gateway that checks every tool call. The same goes for the services written for the agent, as small MCP servers (`broker/mcp_server.py`, standard library only): Keycloak, whose client secrets (`SPIGES_KEYCLOAK_*_CLIENT_SECRET`) only give the skills short-lived tokens, and SAS, whose account (`SPIGES_SAS_REF_SSH_USER`, `SPIGES_SAS_REF_SSH_PASSWORD`) only serves the commands of the `sas-ref` skill on the SAS server of REF.
 
 ```
 agent container ──► claude-gateway ──► claude-mcp-devops     (DEVOPS_PAT)                ──► Azure DevOps Server
                    (groups,         ──► claude-mcp-jira       (JIRA_PERSONAL_TOKEN)       ──► Jira Data Center
                     approvals)      ──► claude-mcp-confluence (CONFLUENCE_PERSONAL_TOKEN) ──► Confluence Data Center
                                     ──► claude-mcp-keycloak   (Keycloak client secrets)   ──► Keycloak (REF, TST)
+                                    ──► claude-mcp-sas        (SAS account of REF)        ──► SAS server (REF)
                                         (each on a network of its own, shared with the gateway only)
 ```
 
@@ -403,9 +404,11 @@ agent container ──► claude-gateway ──► claude-mcp-devops     (DEVOPS
 | `jira` (`mcp-atlassian --read-only`) | `jira` | Read only: read tools go through while the group is open; any other tool is refused, without approval |
 | `confluence` (`mcp-atlassian`) | `confluence` | Read tools go through while the group is open; writes need an approval; page deletion, page moves, and restriction changes are refused |
 | `keycloak` (`claude-mcp-keycloak`) | `keycloak` | Read only: `keycloak_token` (short-lived token of a profile) and `keycloak_profiles` go through while the group is open; called by the skill scripts through `mcp-call`, not by Claude Code, so that a token never reaches the conversation |
+| `sas` (`claude-mcp-sas`) | `sas` | `sas_get` (copy of a file of the server to the drop folder) goes through while the group is open; `sas_exec`, `sas_put`, and `sas_run` need an approval |
 
 - **mcp-call**: `mcp-call <server> <tool> [<arguments as JSON>]` calls one tool through the gateway from a script, and prints the text of its result (tool error: exit code 1, on stderr). A skill uses it when the result mustn't reach the conversation, e.g. `token=$(mcp-call keycloak keycloak_token '{"profile": "bfs"}')`.
 - **Keycloak server**: it reads the profiles from the clients file (`<profile>=<client id>` lines, no secret), `$AGENT_KEYCLOAK_CLIENTS_FILE` (default `$AGENT_HOMES_DIR/keycloak-clients.txt`), mounted read only: after a change of the file, `claude_mcp restart keycloak`. The file is the list of the clients the agent may get a token for, and the user clients share one secret: it's kept out of the folders mounted in the agent container (not under `/shared`), so that the agent can't add a client to it. The secret of a profile is `SPIGES_KEYCLOAK_<PROFILE>_CLIENT_SECRET`, or else the shared `SPIGES_KEYCLOAK_USER_CLIENT_SECRET`. A token is cached until one minute before its expiry.
+- **SAS server**: it runs `ssh` and `scp` to the SAS server of REF (`pssas10i02` by default, or `sas94`, the new server of the migration; hosts and REF SAS command fixed in `broker/claude_mcp_sas.py`), with the account of the secrets file. The host keys are pinned in `$AGENT_SAS_KNOWN_HOSTS_FILE` (default `$AGENT_HOMES_DIR/sas-known-hosts`, a `known_hosts` file), mounted read only and kept out of the folders mounted in the agent container, so that the agent can't change them. The password reaches `ssh` through `SSH_ASKPASS` only, never on a command line. After a rejected login, the server refuses every next call until `claude_mcp restart sas`: the account is a technical account shared with the SpiGes backend, which repeated failures could lock. The remote paths are relative to `~/agent`, without `..`; the local files are read and written only in the drop folder `/shared/mcp-sas` (`$AGENT_MCP_SAS_DIR`, default `$SHARED_BASE_DIR/mcp-sas`), mounted at the same path as in the agent. A command or a SAS program can run for 14 minutes at most; the `sas` server of `mcp.json` sets `"timeout": 900000`.
 
 ### How it works
 
@@ -423,8 +426,8 @@ agent container ──► claude-gateway ──► claude-mcp-devops     (DEVOPS
 
 ### Setup
 
-1. The tokens are added to the secrets file (`claude_secret edit`: `DEVOPS_PAT`, `JIRA_PERSONAL_TOKEN`, `CONFLUENCE_PERSONAL_TOKEN`, `SPIGES_KEYCLOAK_USER_CLIENT_SECRET`, `SPIGES_KEYCLOAK_SAS_CLIENT_SECRET`, `SPIGES_KEYCLOAK_SPIGES_CLIENT_SECRET`), and removed from `.env`.
-2. The Keycloak clients file is placed at `$AGENT_KEYCLOAK_CLIENTS_FILE` (default `~/.claude-agent-homes/keycloak-clients.txt`, on WSL).
+1. The tokens are added to the secrets file (`claude_secret edit`: `DEVOPS_PAT`, `JIRA_PERSONAL_TOKEN`, `CONFLUENCE_PERSONAL_TOKEN`, `SPIGES_KEYCLOAK_USER_CLIENT_SECRET`, `SPIGES_KEYCLOAK_SAS_CLIENT_SECRET`, `SPIGES_KEYCLOAK_SPIGES_CLIENT_SECRET`, `SPIGES_SAS_REF_SSH_USER`, `SPIGES_SAS_REF_SSH_PASSWORD`), and removed from `.env`.
+2. The Keycloak clients file is placed at `$AGENT_KEYCLOAK_CLIENTS_FILE` (default `~/.claude-agent-homes/keycloak-clients.txt`, on WSL), and the pinned host keys of the SAS servers at `$AGENT_SAS_KNOWN_HOSTS_FILE` (default `~/.claude-agent-homes/sas-known-hosts`).
 3. The image is rebuilt, then: `claude_broker` (unlock), `claude_gateway`, and `claude_mcp start <server>` for each server.
 4. A workspace that declares the Jira server in its own `.mcp.json` points it to the gateway: `"jira": {"type": "http", "url": "http://claude-gateway:8090/mcp/jira", "timeout": 180000}`.
 5. `claude_dev`; when the gateway or an MCP container started after the agent, `/mcp` in Claude Code reconnects the server.
@@ -463,7 +466,7 @@ Up to `AGENT_MAX_SLOTS` agents of one profile (default `3`, can be exported in `
 - Services of the host, e.g. a local Postgres, are shared by every container.
 - The secret broker and the MCP gateway are shared by every agent: a group opened with `claude_secret allow` is open for every agent (`claude_secret approve --tool` only covers the agent of the approved call).
 - A restart of the MCP gateway (e.g. `claude_gateway` after a rebuild) ends the MCP sessions of every agent: each one reconnects its servers with `/mcp`.
-- Two agents that publish the same document to Confluence at the same time share its folder in the drop folder of the Confluence server (`/shared/mcp-confluence/<document name>/`).
+- Two agents that publish the same document to Confluence at the same time share its folder in the drop folder of the Confluence server (`/shared/mcp-confluence/<document name>/`). The same goes for the drop folder of the SAS server (`/shared/mcp-sas`) and for `~/agent` on the SAS server.
 
 ### Upgrading to the slots
 

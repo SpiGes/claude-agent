@@ -9,6 +9,11 @@
       "type": "http",
       "url": "http://claude-gateway:8090/mcp/devops",
       "timeout": 180000
+    },
+    "sas": {
+      "type": "http",
+      "url": "http://claude-gateway:8090/mcp/sas",
+      "timeout": 900000
     }
   }
 }

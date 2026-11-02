@@ -32,12 +32,17 @@ export AGENT_GATEWAY_LOG_DIR="${AGENT_GATEWAY_LOG_DIR:-$AGENT_HOMES_DIR/gateway}
 export GATEWAY_APPROVAL_SECONDS="${GATEWAY_APPROVAL_SECONDS:-120}"
 # MCP servers started by claude_mcp, and the drop folder of the Confluence server (the files it reads: page bodies and
 # attachments), under /shared so that the agent writes there and the person opens them before an approval.
-export AGENT_MCP_SERVERS="devops jira confluence keycloak"
+export AGENT_MCP_SERVERS="devops jira confluence keycloak sas"
 # Profiles of the SpiGes Keycloak clients (<profile>=<client id>, no secret), read by the Keycloak MCP server. The
 # file is the list of the clients the agent may get a token for: it's kept out of the folders mounted in the agent
 # container (not under /shared), so that only the person changes it.
 export AGENT_KEYCLOAK_CLIENTS_FILE="${AGENT_KEYCLOAK_CLIENTS_FILE:-$AGENT_HOMES_DIR/keycloak-clients.txt}"
 export AGENT_MCP_CONFLUENCE_DIR="${AGENT_MCP_CONFLUENCE_DIR:-$SHARED_BASE_DIR/mcp-confluence}"
+# Pinned host keys of the SAS servers (known_hosts format), read by the SAS MCP server; out of the folders mounted in
+# the agent container, so that only the person changes them. Drop folder of the SAS server: the files it uploads to
+# the server and downloads from it.
+export AGENT_SAS_KNOWN_HOSTS_FILE="${AGENT_SAS_KNOWN_HOSTS_FILE:-$AGENT_HOMES_DIR/sas-known-hosts}"
+export AGENT_MCP_SAS_DIR="${AGENT_MCP_SAS_DIR:-$SHARED_BASE_DIR/mcp-sas}"
 
 # Name that starts each notification of an agent: the name of its workspace folder, or of the folder
 # above it when the workspace is a "branch" folder (e.g. backend/branch gives "backend"). AGENT_NOTIFY_NAME
@@ -345,8 +350,8 @@ _claude_gateway_routes(){
 
 # Starts the MCP gateway (see README, "MCP gateway") unless it's running: on the network of the agents, which reach
 # it at http://claude-gateway:8090/mcp/<name>, and on the network of each MCP server created so far (claude_mcp
-# connects it to the networks created later). It holds no secret: its groups (devops, jira, confluence, keycloak) and
-# the waiting write calls are lost when it restarts, every group is then closed. A gateway started from an older image,
+# connects it to the networks created later). It holds no secret: its groups (devops, jira, confluence, keycloak,
+# sas) and the waiting write calls are lost when it restarts, every group is then closed. A gateway started from an older image,
 # or with other routes (e.g. a server added to launch.sh), is restarted. It doesn't start the MCP containers
 # (claude_mcp), nor is it started by claude_dev.
 claude_gateway(){
@@ -435,6 +440,14 @@ _claude_mcp_spec(){
               -e MCP_SECRET_FILE=1 -e KEYCLOAK_CLIENTS_FILE=/config/keycloak-clients.txt \
               -v "$AGENT_KEYCLOAK_CLIENTS_FILE:/config/keycloak-clients.txt:ro"
             ;;
+        sas)
+            # Server of the agent (broker/claude_mcp_sas.py): ssh and scp to the SAS server of REF. The known hosts
+            # file is mounted read only; the drop folder at the same path as in the agent.
+            local secrets="SPIGES_SAS_REF_SSH_USER SPIGES_SAS_REF_SSH_PASSWORD"
+            printf '%s\n' "claude-mcp-sas serve --port 8000" "$secrets" 8000 \
+              -e MCP_SECRET_FILE=1 -e SAS_KNOWN_HOSTS_FILE=/config/sas-known-hosts -e SAS_DROP_DIR=/shared/mcp-sas \
+              -v "$AGENT_SAS_KNOWN_HOSTS_FILE:/config/sas-known-hosts:ro" -v "$AGENT_MCP_SAS_DIR:/shared/mcp-sas"
+            ;;
         confluence)
             printf '%s\n' "$atlassian" CONFLUENCE_PERSONAL_TOKEN 8000 \
               -e CONFLUENCE_URL=https://intranet.confluence.bfs.admin.ch/confluence \
@@ -449,7 +462,7 @@ _claude_mcp_spec(){
 }
 
 # Starts, stops, or restarts the container of an MCP server (see README, "MCP gateway"):
-#   claude_mcp start|stop|restart <server>   (servers: devops, jira, confluence, keycloak)
+#   claude_mcp start|stop|restart <server>   (servers: devops, jira, confluence, keycloak, sas)
 # The container starts without its secrets, on the network of the server, shared with the gateway only (connected to
 # it when it runs). Its secrets are then read from the secret broker (ctl export, through docker exec) and written
 # straight into the tmpfs of the container, through a pipe between two docker exec: no variable, no file on the host,
@@ -486,12 +499,17 @@ claude_mcp(){
     network="$(_claude_mcp_network "$name")" || return
     docker rm "$container" >/dev/null 2>&1
     # Created here, with the account of the user: a folder that docker run creates for a mount belongs to root.
-    if [ "$name" = confluence ]; then
-        mkdir -p "$AGENT_MCP_CONFLUENCE_DIR" || return
-    fi
+    case "$name" in
+        confluence) mkdir -p "$AGENT_MCP_CONFLUENCE_DIR" || return ;;
+        sas) mkdir -p "$AGENT_MCP_SAS_DIR" || return ;;
+    esac
     # A missing file would be created by docker run as a folder.
     if [ "$name" = keycloak ] && [ ! -f "$AGENT_KEYCLOAK_CLIENTS_FILE" ]; then
         echo "No Keycloak clients file ($AGENT_KEYCLOAK_CLIENTS_FILE): see AGENT_KEYCLOAK_CLIENTS_FILE." >&2
+        return 1
+    fi
+    if [ "$name" = sas ] && [ ! -f "$AGENT_SAS_KNOWN_HOSTS_FILE" ]; then
+        echo "No known hosts file of the SAS servers ($AGENT_SAS_KNOWN_HOSTS_FILE): see AGENT_SAS_KNOWN_HOSTS_FILE." >&2
         return 1
     fi
     # The server waits for its secrets (a file of KEY=value lines, at most a minute), then replaces the shell. With
@@ -568,7 +586,8 @@ except OSError:
 }
 
 # Commands of the secret broker and of the MCP gateway (see README, "Secret broker", "MCP gateway"):
-#   claude_secret allow <group>           opens a group: git, gh (broker); devops, jira, confluence, keycloak (gateway)
+#   claude_secret allow <group>           opens a group: git, gh (broker); devops, jira, confluence, keycloak, sas
+#                                         (gateway)
 #   claude_secret revoke <group>|all      closes a group, or every group of both
 #   claude_secret status                  state of the broker and of the gateway, and the waiting write calls
 #   claude_secret pending                 waiting write calls of the gateway

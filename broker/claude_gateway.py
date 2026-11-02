@@ -232,11 +232,20 @@ KEYCLOAK_POLICY: Final = Policy(
     writes_allowed=False,
 )
 
+# SAS (claude-mcp-sas): commands on the SAS server of REF. Every command, upload and SAS run is a write, approved one by
+# one; a download to the drop folder is a read.
+SAS_POLICY: Final = Policy(
+    group="sas",
+    label="SAS",
+    read_tools=frozenset({"sas_get"}),
+)
+
 POLICIES: Final[Mapping[str, Policy]] = {
     "devops": DEVOPS_POLICY,
     "jira": JIRA_POLICY,
     "confluence": CONFLUENCE_POLICY,
     "keycloak": KEYCLOAK_POLICY,
+    "sas": SAS_POLICY,
 }
 
 
