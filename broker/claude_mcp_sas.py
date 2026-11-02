@@ -49,11 +49,13 @@ COMMAND_TIMEOUT_SECONDS: Final = 14 * 60
 MAX_OUTPUT_CHARACTERS: Final = 30_000
 REMOTE_PATH_PATTERN: Final = re.compile(r"[A-Za-z0-9_.][A-Za-z0-9_./-]*")
 LOGIN_REJECTED_PATTERN: Final = re.compile(
-    r"permission denied|authentication failed|too many authentication", re.IGNORECASE
+    r"^\S+@\S+: Permission denied \(|^Authentication failed|Too many authentication failures", re.MULTILINE
 )
 
 LOGGER: Final = logging.getLogger("mcp-server")
 
+# The messages of ssh for a rejected login, e.g. "user@host: Permission denied (keyboard-interactive).", and not the
+# "Permission denied" of a file or a folder (e.g. "scp: agent/x: Permission denied").
 
 @dataclass(frozen=True, slots=True)
 class SasServer:

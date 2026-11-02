@@ -107,20 +107,32 @@ class ExecTest(SasTestCase):
 
 class LoginRejectedTest(SasTestCase):
     def test_every_next_call_is_refused(self) -> None:
-        runner = FakeRunner(Completed(255, "", "tu_test@host: Permission denied (keyboard-interactive).\n"))
-        sas = self.sas(runner)
-        with self.assertRaisesRegex(ToolError, "AUTHENTICATION FAILED on pssas10i02"):
-            sas.exec({"command": "ls"})
-        with self.assertRaisesRegex(ToolError, "a login was rejected before"):
-            sas.exec({"command": "ls", "server": "sas94"})
-        self.assertEqual(len(runner.calls), 1)
+        for stderr in (
+            "tu_test@pssas10i02.bfi.admin.ch: Permission denied (keyboard-interactive).\n",
+            "Authentication failed.\n",
+            "Received disconnect from 10.0.0.1 port 22:2: Too many authentication failures\n",
+        ):
+            with self.subTest(stderr=stderr):
+                runner = FakeRunner(Completed(255, "", stderr))
+                sas = self.sas(runner)
+                with self.assertRaisesRegex(ToolError, "AUTHENTICATION FAILED on pssas10i02"):
+                    sas.exec({"command": "ls"})
+                with self.assertRaisesRegex(ToolError, "a login was rejected before"):
+                    sas.exec({"command": "ls", "server": "sas94"})
+                self.assertEqual(len(runner.calls), 1)
 
     def test_other_failure_doesnt_lock(self) -> None:
-        runner = FakeRunner(Completed(255, "", "ssh: connect to host: Connection timed out\n"))
-        sas = self.sas(runner)
-        self.assertIn("[exit status of ssh: 255]", sas.exec({"command": "ls"}))
-        sas.exec({"command": "ls"})
-        self.assertEqual(len(runner.calls), 2)
+        for status, stderr in (
+            (255, "ssh: connect to host: Connection timed out\n"),
+            (1, "scp: agent/x/test.log: Permission denied\n"),
+            (2, "ls: cannot open directory '/root': Permission denied\n"),
+        ):
+            with self.subTest(stderr=stderr):
+                runner = FakeRunner(Completed(status, "", stderr))
+                sas = self.sas(runner)
+                self.assertIn(f"[exit status of ssh: {status}]", sas.exec({"command": "ls"}))
+                sas.exec({"command": "ls"})
+                self.assertEqual(len(runner.calls), 2)
 
 
 class PutTest(SasTestCase):
