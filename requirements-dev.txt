@@ -3,6 +3,8 @@ bandit==1.9.4
 black==26.10.1
 coverage==7.16.2
 mypy==2.4.0
+# Types of the Oracle MCP server, for mypy and pyright (same version as broker/oracle-requirements.txt).
+oracledb==26.0.1
 pre-commit==4.7.0
 pyright==1.1.414
 pytest-cov==7.1.0

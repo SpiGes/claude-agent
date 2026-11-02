@@ -19,14 +19,15 @@ repos:
         name: mypy
         entry: mypy
         language: python
-        additional_dependencies: [mypy==2.4.0]
+        # oracledb: the types of the Oracle MCP server (broker/oracle-requirements.txt).
+        additional_dependencies: [mypy==2.4.0, oracledb==26.0.1]
         files: ^((broker|tests)/.*\.py|pyproject\.toml)$
         pass_filenames: false
       - id: pyright
         name: pyright (same checks as Pylance in VS Code)
         entry: pyright
         language: python
-        additional_dependencies: [pyright==1.1.414]
+        additional_dependencies: [pyright==1.1.414, oracledb==26.0.1]
         files: ^((broker|tests)/.*\.py|pyproject\.toml)$
         pass_filenames: false
       - id: bandit
