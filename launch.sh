@@ -33,8 +33,10 @@ export GATEWAY_APPROVAL_SECONDS="${GATEWAY_APPROVAL_SECONDS:-120}"
 # MCP servers started by claude_mcp, and the drop folder of the Confluence server (the files it reads: page bodies and
 # attachments), under /shared so that the agent writes there and the person opens them before an approval.
 export AGENT_MCP_SERVERS="devops jira confluence keycloak"
-# Profiles of the SpiGes Keycloak clients (<profile>=<client id>, no secret), read by the Keycloak MCP server.
-export AGENT_KEYCLOAK_CLIENTS_FILE="${AGENT_KEYCLOAK_CLIENTS_FILE:-$SHARED_BASE_DIR/backend-run/keycloak-clients.txt}"
+# Profiles of the SpiGes Keycloak clients (<profile>=<client id>, no secret), read by the Keycloak MCP server. The
+# file is the list of the clients the agent may get a token for: it's kept out of the folders mounted in the agent
+# container (not under /shared), so that only the person changes it.
+export AGENT_KEYCLOAK_CLIENTS_FILE="${AGENT_KEYCLOAK_CLIENTS_FILE:-$AGENT_HOMES_DIR/keycloak-clients.txt}"
 export AGENT_MCP_CONFLUENCE_DIR="${AGENT_MCP_CONFLUENCE_DIR:-$SHARED_BASE_DIR/mcp-confluence}"
 
 # Name that starts each notification of an agent: the name of its workspace folder, or of the folder
@@ -448,11 +450,11 @@ _claude_mcp_spec(){
 
 # Starts, stops, or restarts the container of an MCP server (see README, "MCP gateway"):
 #   claude_mcp start|stop|restart <server>   (servers: devops, jira, confluence, keycloak)
-# The container starts without its token, on the network of the server, shared with the gateway only (connected to it
-# when it runs). Its token is then read from the secret broker (ctl export, through docker exec) and written
+# The container starts without its secrets, on the network of the server, shared with the gateway only (connected to
+# it when it runs). Its secrets are then read from the secret broker (ctl export, through docker exec) and written
 # straight into the tmpfs of the container, through a pipe between two docker exec: no variable, no file on the host,
-# nothing in the configuration of the container. The server reads it, the file is removed, and the token only stays in
-# the memory of the server. No automatic restart: after a restart of Docker, claude_mcp start is run again.
+# nothing in the configuration of the container. The server reads them, the file is removed, and the secrets only stay
+# in the memory of the server. No automatic restart: after a restart of Docker, claude_mcp start is run again.
 claude_mcp(){
     local action="${1:-}" name="${2:-}"
     if [[ ! "$action" =~ ^(start|stop|restart)$ ]] || [ -z "$name" ]; then

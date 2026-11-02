@@ -405,7 +405,7 @@ agent container ──► claude-gateway ──► claude-mcp-devops     (DEVOPS
 | `keycloak` (`claude-mcp-keycloak`) | `keycloak` | Read only: `keycloak_token` (short-lived token of a profile) and `keycloak_profiles` go through while the group is open; called by the skill scripts through `mcp-call`, not by Claude Code, so that a token never reaches the conversation |
 
 - **mcp-call**: `mcp-call <server> <tool> [<arguments as JSON>]` calls one tool through the gateway from a script, and prints the text of its result (tool error: exit code 1, on stderr). A skill uses it when the result mustn't reach the conversation, e.g. `token=$(mcp-call keycloak keycloak_token '{"profile": "bfs"}')`.
-- **Keycloak server**: it reads the profiles from the clients file (`<profile>=<client id>` lines, no secret), `$AGENT_KEYCLOAK_CLIENTS_FILE` (default `$SHARED_BASE_DIR/backend-run/keycloak-clients.txt`), mounted read only: after a change of the file, `claude_mcp restart keycloak`. The secret of a profile is `SPIGES_KEYCLOAK_<PROFILE>_CLIENT_SECRET`, or else the shared `SPIGES_KEYCLOAK_USER_CLIENT_SECRET`. A token is cached until one minute before its expiry.
+- **Keycloak server**: it reads the profiles from the clients file (`<profile>=<client id>` lines, no secret), `$AGENT_KEYCLOAK_CLIENTS_FILE` (default `$AGENT_HOMES_DIR/keycloak-clients.txt`), mounted read only: after a change of the file, `claude_mcp restart keycloak`. The file is the list of the clients the agent may get a token for, and the user clients share one secret: it's kept out of the folders mounted in the agent container (not under `/shared`), so that the agent can't add a client to it. The secret of a profile is `SPIGES_KEYCLOAK_<PROFILE>_CLIENT_SECRET`, or else the shared `SPIGES_KEYCLOAK_USER_CLIENT_SECRET`. A token is cached until one minute before its expiry.
 
 ### How it works
 
@@ -424,9 +424,10 @@ agent container ──► claude-gateway ──► claude-mcp-devops     (DEVOPS
 ### Setup
 
 1. The tokens are added to the secrets file (`claude_secret edit`: `DEVOPS_PAT`, `JIRA_PERSONAL_TOKEN`, `CONFLUENCE_PERSONAL_TOKEN`, `SPIGES_KEYCLOAK_USER_CLIENT_SECRET`, `SPIGES_KEYCLOAK_SAS_CLIENT_SECRET`, `SPIGES_KEYCLOAK_SPIGES_CLIENT_SECRET`), and removed from `.env`.
-2. The image is rebuilt, then: `claude_broker` (unlock), `claude_gateway`, and `claude_mcp start <server>` for each server.
-3. A workspace that declares the Jira server in its own `.mcp.json` points it to the gateway: `"jira": {"type": "http", "url": "http://claude-gateway:8090/mcp/jira", "timeout": 180000}`.
-4. `claude_dev`; when the gateway or an MCP container started after the agent, `/mcp` in Claude Code reconnects the server.
+2. The Keycloak clients file is placed at `$AGENT_KEYCLOAK_CLIENTS_FILE` (default `~/.claude-agent-homes/keycloak-clients.txt`, on WSL).
+3. The image is rebuilt, then: `claude_broker` (unlock), `claude_gateway`, and `claude_mcp start <server>` for each server.
+4. A workspace that declares the Jira server in its own `.mcp.json` points it to the gateway: `"jira": {"type": "http", "url": "http://claude-gateway:8090/mcp/jira", "timeout": 180000}`.
+5. `claude_dev`; when the gateway or an MCP container started after the agent, `/mcp` in Claude Code reconnects the server.
 
 ### Usage
 
