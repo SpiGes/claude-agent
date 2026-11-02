@@ -3,7 +3,7 @@ import io
 import subprocess
 import tempfile
 import unittest
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from unittest import mock
 
@@ -25,12 +25,15 @@ ASKPASS = "/usr/local/bin/claude-mcp-sas"
 
 
 class FakeRunner:
-    def __init__(self, *results: Completed) -> None:
+    def __init__(self, *results: Completed, effect: Callable[[Sequence[str]], None] | None = None) -> None:
         self.results = list(results)
+        self.effect = effect
         self.calls: list[tuple[list[str], dict[str, str]]] = []
 
     def __call__(self, args: Sequence[str], env: Mapping[str, str]) -> Completed:
         self.calls.append((list(args), dict(env)))
+        if self.effect is not None:
+            self.effect(args)
         return self.results.pop(0) if self.results else Completed(0, "", "")
 
 
@@ -138,24 +141,32 @@ class LoginRejectedTest(SasTestCase):
 class PutTest(SasTestCase):
     def test_put(self) -> None:
         (self.drop / "work").mkdir()
-        program = self.drop / "work" / "test.sas"
-        program.write_text("%put TEST;", encoding="utf-8")
-        runner = FakeRunner()
-        message = self.sas(runner).put({"files": ["work/test.sas", str(program)], "remote_dir": "SIS2-1-x"})
+        (self.drop / "work" / "test.sas").write_text("%put TEST;", encoding="utf-8")
+        (self.drop / "macro.sas").write_text("%macro m; %mend;", encoding="utf-8")
+        sent: dict[str, str] = {}
+
+        def upload(args: Sequence[str]) -> None:
+            if args[0] == "scp":
+                sent.update({Path(source).name: Path(source).read_text(encoding="utf-8") for source in args[-3:-1]})
+                self.assertFalse(any(Path(source).is_relative_to(self.drop) for source in args[-3:-1]))
+
+        runner = FakeRunner(effect=upload)
+        files = ["work/test.sas", str(self.drop / "macro.sas")]
+        message = self.sas(runner).put({"files": files, "remote_dir": "SIS2-1-x"})
         self.assertEqual(message, "2 file(s) copied to ~/agent/SIS2-1-x/")
         mkdir, scp = runner.calls
         self.assertEqual(mkdir[0][-1], "mkdir -p ~/agent/SIS2-1-x")
         self.assertEqual(scp[0][0:2], ["scp", "-q"])
-        self.assertEqual(
-            scp[0][-3:],
-            [str(program.resolve()), str(program.resolve()), "tu_test@pssas10i02.bfi.admin.ch:agent/SIS2-1-x/"],
-        )
+        self.assertEqual(scp[0][-1], "tu_test@pssas10i02.bfi.admin.ch:agent/SIS2-1-x/")
+        self.assertEqual(sent, {"test.sas": "%put TEST;", "macro.sas": "%macro m; %mend;"})
+        # The private copies are gone.
+        self.assertFalse(any(Path(source).exists() for source in scp[0][-3:-1]))
 
     def test_files_out_of_the_drop_folder_are_refused(self) -> None:
-        link = self.drop / "link.txt"
-        link.symlink_to(self.outside)
+        (self.drop / "link.txt").symlink_to(self.outside)
+        (self.drop / "folder").mkdir()
         sas = self.sas(FakeRunner())
-        for file in (str(self.outside), "../outside.txt", "link.txt", ".", "missing.txt"):
+        for file in (str(self.outside), "../outside.txt", "link.txt", ".", "folder", "missing.txt"):
             with self.subTest(file=file), self.assertRaises(ToolError):
                 sas.put({"files": [file], "remote_dir": "x"})
         invalid: tuple[object, ...] = ([], "a.sas", None)
@@ -165,6 +176,29 @@ class PutTest(SasTestCase):
         (self.drop / "a.sas").write_text("", encoding="utf-8")
         with self.assertRaisesRegex(ToolError, "remote_dir"):
             sas.put({"files": ["a.sas"], "remote_dir": "../x"})
+        (self.drop / "folder" / "a.sas").write_text("", encoding="utf-8")
+        with self.assertRaisesRegex(ToolError, "same name"):
+            sas.put({"files": ["a.sas", "folder/a.sas"], "remote_dir": "x"})
+
+    def test_link_put_after_the_first_check_is_refused(self) -> None:
+        """A file or a folder replaced by a link after the first check (_local_file) is caught once open."""
+        outside_folder = self.outside.parent / "outside-folder"
+        outside_folder.mkdir()
+        (outside_folder / "a.sas").write_text("secret", encoding="utf-8")
+        (self.drop / "folder").symlink_to(outside_folder)
+        (self.drop / "file.sas").symlink_to(self.outside)
+        sas = self.sas(FakeRunner())
+        for path, message in (
+            (self.drop / "folder" / "a.sas", "only the regular files of the drop folder"),
+            (self.drop / "file.sas", "can't be opened as a file of the drop folder"),
+        ):
+            # The first check is skipped, as if the link had been put just after it.
+            with (
+                self.subTest(path=path),
+                mock.patch.object(SasRef, "_local_file", return_value=path),
+                self.assertRaisesRegex(ToolError, message),
+            ):
+                sas.put({"files": ["a.sas"], "remote_dir": "x"})
 
     def test_failed_copy(self) -> None:
         (self.drop / "a.sas").write_text("", encoding="utf-8")
@@ -174,23 +208,39 @@ class PutTest(SasTestCase):
 
 
 class GetTest(SasTestCase):
+    @staticmethod
+    def download(args: Sequence[str]) -> None:
+        Path(args[-1]).write_text("NOTE: log\n", encoding="utf-8")
+
     def test_get(self) -> None:
-        runner = FakeRunner()
+        runner = FakeRunner(effect=self.download)
         message = self.sas(runner).get({"remote_file": "x/test.log", "local_file": "SIS2-1/test.log"})
         target = (self.drop / "SIS2-1" / "test.log").resolve()
         self.assertEqual(message, f"~/agent/x/test.log copied to {target}")
-        self.assertTrue(target.parent.is_dir())
+        self.assertEqual(target.read_text(encoding="utf-8"), "NOTE: log\n")
         args, _ = runner.calls[0]
-        self.assertEqual(args[-2:], ["tu_test@pssas10i02.bfi.admin.ch:agent/x/test.log", str(target)])
+        self.assertEqual(args[-2], "tu_test@pssas10i02.bfi.admin.ch:agent/x/test.log")
+        self.assertFalse(Path(args[-1]).is_relative_to(self.drop))
+        # An existing file is replaced, not appended to.
+        target.write_text("older and longer content\n", encoding="utf-8")
+        self.sas(FakeRunner(effect=self.download)).get({"remote_file": "x/test.log", "local_file": str(target)})
+        self.assertEqual(target.read_text(encoding="utf-8"), "NOTE: log\n")
 
     def test_refused(self) -> None:
-        sas = self.sas(FakeRunner())
-        with self.assertRaises(ToolError):
-            sas.get({"remote_file": "x.log", "local_file": "../x.log"})
-        with self.assertRaises(ToolError):
-            sas.get({"remote_file": "x.log", "local_file": ""})
+        (self.drop / "link.log").symlink_to(self.outside)
+        sas = self.sas(FakeRunner(effect=self.download))
+        for local_file in ("../x.log", "", "link.log"):
+            with self.subTest(local_file=local_file), self.assertRaises(ToolError):
+                sas.get({"remote_file": "x.log", "local_file": local_file})
         with self.assertRaises(ToolError):
             sas.get({"remote_file": "/etc/passwd", "local_file": "x"})
+        self.assertEqual(self.outside.read_text(encoding="utf-8"), "x")
+
+    def test_failed_download(self) -> None:
+        runner = FakeRunner(Completed(1, "", "scp: agent/x.log: No such file or directory\n"))
+        with self.assertRaisesRegex(ToolError, "No such file or directory"):
+            self.sas(runner).get({"remote_file": "x.log", "local_file": "x.log"})
+        self.assertFalse((self.drop / "x.log").exists())
 
 
 class RunTest(SasTestCase):

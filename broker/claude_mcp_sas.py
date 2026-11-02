@@ -18,7 +18,10 @@ Controls:
   the environment of these processes, never on a command line
 - after a rejected login, every next call is refused until the server is restarted (claude_mcp restart sas): the
   account is a technical account shared with the SpiGes backend, which repeated failures could lock
-- the remote paths are relative to ~/agent, without `..`; the local files are in the drop folder only
+- the remote paths are relative to ~/agent, without `..`; the local files are in the drop folder only. ssh and scp
+  never open them: the server opens each one without following a link, checks the real path of the open file, and
+  copies it through a private temporary folder, so that a link put in the drop folder by the agent meanwhile can't
+  make scp read or write another file of the container (e.g. the environment of a process, which holds the password)
 
 Installed in the image as /usr/local/bin/claude-mcp-sas. Usage:
     claude-mcp-sas serve --env-file <file> [--port <port>]
@@ -28,8 +31,11 @@ import logging
 import os
 import re
 import shlex
+import shutil
+import stat
 import subprocess  # nosec B404  # ssh and scp, with a list of arguments
 import sys
+import tempfile
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -48,14 +54,14 @@ REMOTE_BASE: Final = "agent"
 COMMAND_TIMEOUT_SECONDS: Final = 14 * 60
 MAX_OUTPUT_CHARACTERS: Final = 30_000
 REMOTE_PATH_PATTERN: Final = re.compile(r"[A-Za-z0-9_.][A-Za-z0-9_./-]*")
+# The messages of ssh for a rejected login, e.g. "user@host: Permission denied (keyboard-interactive).", and not the
+# "Permission denied" of a file or a folder (e.g. "scp: agent/x: Permission denied").
 LOGIN_REJECTED_PATTERN: Final = re.compile(
     r"^\S+@\S+: Permission denied \(|^Authentication failed|Too many authentication failures", re.MULTILINE
 )
 
 LOGGER: Final = logging.getLogger("mcp-server")
 
-# The messages of ssh for a rejected login, e.g. "user@host: Permission denied (keyboard-interactive).", and not the
-# "Permission denied" of a file or a folder (e.g. "scp: agent/x: Permission denied").
 
 @dataclass(frozen=True, slots=True)
 class SasServer:
@@ -167,21 +173,30 @@ class SasRef:
         if not isinstance(files, list) or not files:
             message = "the argument files is expected: a list of files of the drop folder"
             raise ToolError(message)
-        local = [self._local_file(file, must_exist=True) for file in cast("list[object]", files)]
+        local = [self._local_file(file) for file in cast("list[object]", files)]
+        names = [path.name for path in local]
+        if len(set(names)) != len(names):
+            message = "files: two files have the same name, they would overwrite each other on the server"
+            raise ToolError(message)
         target = remote_path(arguments.get("remote_dir"), "remote_dir")
         server = self._server(arguments)
-        self._check(self._ssh(server, f"mkdir -p ~/{REMOTE_BASE}/{shlex.quote(target)}"))
-        result = self._scp(server, [str(path) for path in local], f"{REMOTE_BASE}/{target}/", upload=True)
+        with tempfile.TemporaryDirectory(prefix="sas-put-") as folder:
+            copies = [self._copy_from_drop(path, Path(folder) / path.name) for path in local]
+            self._check(self._ssh(server, f"mkdir -p ~/{REMOTE_BASE}/{shlex.quote(target)}"))
+            result = self._scp(server, [str(copy) for copy in copies], f"{REMOTE_BASE}/{target}/", upload=True)
         self._check(result)
         return f"{len(local)} file(s) copied to ~/{REMOTE_BASE}/{target}/"
 
     def get(self, arguments: Mapping[str, object]) -> str:
         """Copy ~/agent/<file> to the drop folder."""
         source = remote_path(arguments.get("remote_file"), "remote_file")
-        local = self._local_file(arguments.get("local_file"), must_exist=False)
-        local.parent.mkdir(parents=True, exist_ok=True)
+        local = self._local_file(arguments.get("local_file"))
         server = self._server(arguments)
-        self._check(self._scp(server, [f"{REMOTE_BASE}/{source}"], str(local), upload=False))
+        with tempfile.TemporaryDirectory(prefix="sas-get-") as folder:
+            download = Path(folder) / "download"
+            self._check(self._scp(server, [f"{REMOTE_BASE}/{source}"], str(download), upload=False))
+            local.parent.mkdir(parents=True, exist_ok=True)
+            self._copy_to_drop(download, local)
         return f"~/{REMOTE_BASE}/{source} copied to {local}"
 
     def run_sas(self, arguments: Mapping[str, object]) -> str:
@@ -206,20 +221,60 @@ class SasRef:
             raise ToolError(message)
         return server
 
-    def _local_file(self, value: object, *, must_exist: bool) -> Path:
-        """Return a file of the drop folder, given relative to it or as an absolute path in it."""
+    def _local_file(self, value: object) -> Path:
+        """Return a path of the drop folder, given relative to it or as an absolute path in it.
+
+        Only a first check, for a clear message: the file is checked again once open (_open_in_drop).
+        """
         if not isinstance(value, str) or not value:
             message = f"a file of the drop folder {self._drop_dir} is expected"
             raise ToolError(message)
-        drop = self._drop_dir.resolve()
         path = (self._drop_dir / value).resolve()
-        if not path.is_relative_to(drop) or path == drop:
+        if not self._in_drop(path):
             message = f"{value}: only the files of the drop folder {self._drop_dir} can be used"
             raise ToolError(message)
-        if must_exist and not path.is_file():
-            message = f"{value}: no such file in the drop folder {self._drop_dir}"
-            raise ToolError(message)
         return path
+
+    def _in_drop(self, path: Path) -> bool:
+        drop = self._drop_dir.resolve()
+        return path.is_relative_to(drop) and path != drop
+
+    def _open_in_drop(self, path: Path, flags: int) -> int:
+        """Open a regular file of the drop folder, without following a link, and check where it really is.
+
+        The real path is read from the open file (/proc/self/fd, Linux only: the server runs in its container), so
+        that a folder of the path replaced by a link after the first check is caught too.
+        """
+        try:
+            descriptor = os.open(path, flags | os.O_NOFOLLOW | os.O_CLOEXEC, 0o640)
+        except FileNotFoundError as error:
+            message = f"{path}: no such file in the drop folder {self._drop_dir}"
+            raise ToolError(message) from error
+        except OSError as error:
+            message = f"{path}: can't be opened as a file of the drop folder ({error.strerror})"
+            raise ToolError(message) from error
+        real = Path(f"/proc/self/fd/{descriptor}").readlink()
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode) or not self._in_drop(real):
+            os.close(descriptor)
+            message = f"{path}: only the regular files of the drop folder {self._drop_dir} can be used"
+            raise ToolError(message)
+        return descriptor
+
+    def _copy_from_drop(self, path: Path, copy: Path) -> Path:
+        with (
+            os.fdopen(self._open_in_drop(path, os.O_RDONLY), "rb") as source,
+            copy.open("xb") as target,
+        ):
+            shutil.copyfileobj(source, target)
+        return copy
+
+    def _copy_to_drop(self, download: Path, path: Path) -> None:
+        with (
+            download.open("rb") as source,
+            os.fdopen(self._open_in_drop(path, os.O_WRONLY | os.O_CREAT), "wb") as target,
+        ):
+            target.truncate()
+            shutil.copyfileobj(source, target)
 
     def _options(self, server: str) -> list[str]:
         if not self._known_hosts.is_file():
