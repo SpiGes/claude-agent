@@ -22,7 +22,8 @@ Installed in the image as /usr/local/bin/claude-gateway. Usage:
     claude-gateway ctl status                              prints the state of each group and the waiting calls
     claude-gateway ctl pending                             lists the waiting calls, with their full arguments
     claude-gateway ctl approve [<id>] [--tool <minutes>m]  approves a waiting call (the oldest without id); with
-                                                           --tool, also the next calls of the same tool for a while
+                                                           --tool, also the next calls of the same tool by the
+                                                           same agent for a while
     claude-gateway ctl deny [<id>]                         refuses a waiting call (the oldest without id)
 
 Every tool call is logged to GATEWAY_LOG with its main arguments only (no content, no secret value).
@@ -430,8 +431,9 @@ class Approvals:
         self._lock = threading.Lock()
         self._numbers = itertools.count(1)
         self._pending: dict[int, PendingCall] = {}
-        # Tools approved for a while (`approve --tool`), by group and tool.
-        self._allowed_until: dict[tuple[str, str], float] = {}
+        # Tools approved for a while (`approve --tool`), by group, tool, and agent: the approval of a call of one agent
+        # doesn't let the calls of another agent through.
+        self._allowed_until: dict[tuple[str, str, str], float] = {}
 
     @property
     def timeout_seconds(self) -> float:
@@ -440,7 +442,7 @@ class Approvals:
 
     def request(self, call: ToolCall) -> tuple[bool, str]:
         """Wait for the decision on a write call; return whether it's approved, and how."""
-        key = (call.group, call.tool)
+        key = (call.group, call.tool, call.agent)
         with self._lock:
             if self._clock() < self._allowed_until.get(key, float("-inf")):
                 return True, "approved for the tool"
@@ -481,7 +483,7 @@ class Approvals:
             pending.decided.set()
             tool = pending.call.tool
             if minutes is not None:
-                self._allowed_until[pending.call.group, tool] = self._clock() + minutes * 60
+                self._allowed_until[pending.call.group, tool, pending.call.agent] = self._clock() + minutes * 60
         LOGGER.info("call %s %s%s", number, "approved" if approve else "denied", _for_minutes(minutes, tool))
         return f"Call {number} {'approved' if approve else 'denied'}: {tool}{_for_minutes(minutes, tool)}"
 
@@ -511,7 +513,7 @@ def _decision_arguments(args: Sequence[str], *, allow_tool: bool) -> tuple[int |
 
 
 def _for_minutes(minutes: int | None, tool: str) -> str:
-    return f", and the next calls of {tool} for {minutes} min" if minutes is not None else ""
+    return f", and the next calls of {tool} by the same agent for {minutes} min" if minutes is not None else ""
 
 
 class Gateway:

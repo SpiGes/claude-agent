@@ -328,6 +328,28 @@ class ApprovalsTest(GatewayTestCase):
         blocked.start()
         while not self.gateway.approvals.pending_lines():
             threading.Event().wait(0.01)
+    def test_approval_for_the_tool_is_limited_to_the_agent(self) -> None:
+        approvals = Approvals(5, self.clock, self.notifications.append)
+
+        def decide(*args: str, approve: bool) -> threading.Thread:
+            def run() -> None:
+                while not approvals.pending_lines():
+                    threading.Event().wait(0.01)
+                approvals.decide(list(args), approve=approve)
+
+            thread = threading.Thread(target=run, daemon=True)
+            thread.start()
+            return thread
+
+        thread = decide("--tool", "5m", approve=True)
+        self.assertEqual(approvals.request(write_call("devops_work_item_update")), (True, "approved"))
+        thread.join()
+        other_agent = ToolCall("devops", "DevOps", "devops_work_item_update", "", "{}", "agent dev 1")
+        thread = decide(approve=False)
+        self.assertEqual(approvals.request(other_agent), (False, "denied"))
+        thread.join()
+        self.assertEqual(approvals.request(write_call("devops_work_item_update")), (True, "approved for the tool"))
+
         self.assertEqual(self.gateway.approvals.pending_lines(), ["  1: agent dev 2, DevOps devops_work_item_update"])
         for args, approve, expected in (
             (["9"], True, "no waiting call 9 \\(waiting: 1\\)"),
@@ -455,7 +477,13 @@ class AdminCommandTest(GatewayTestCase):
         ok, message = run_admin_command(self.gateway, {"command": "approve", "args": ["--tool", "5m"]})
         self.assertEqual(
             (ok, message),
-            (True, "Call 1 approved: devops_work_item_update, and the next calls of devops_work_item_update for 5 min"),
+            (
+                True,
+                (
+                    "Call 1 approved: devops_work_item_update, and the next calls of devops_work_item_update by the "
+                    "same agent for 5 min"
+                ),
+            ),
         )
         thread.join()
         self.assertEqual(result, [None])

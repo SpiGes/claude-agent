@@ -574,7 +574,7 @@ except OSError:
 #   claude_secret pending                 waiting write calls of the gateway
 #   claude_secret approve [<id>] [--tool <minutes>m]
 #                                         approves a waiting write call (the oldest without id); with --tool, also the
-#                                         next calls of the same tool for a while
+#                                         next calls of the same tool by the same agent for a while
 #   claude_secret deny [<id>]             refuses a waiting write call (the oldest without id)
 #   claude_secret log [<lines>]           end of the logs of the broker and of the gateway (default 30 lines each)
 #   claude_secret edit                    creates or changes the secrets file, then reloads the broker
