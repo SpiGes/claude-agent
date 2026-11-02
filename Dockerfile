@@ -192,7 +192,8 @@ RUN pipx install yq==4.2.0
 RUN pipx install semgrep==1.177.0
 # Oracle Instant Client (Basic Light), for the Oracle MCP server (claude-mcp-oracle, see README, "MCP gateway"):
 # oracledb runs in thick mode, since the SpiGes databases require the native network encryption of Oracle, which the
-# thin mode doesn't support. Official download of Oracle, pinned by its SHA-256 (published on the download page).
+# thin mode doesn't support. Official download of Oracle, pinned by its SHA-256 (published on the download page);
+# free to use and to redistribute under the Oracle Free Use Terms and Conditions.
 # Instant Client looks for libaio.so.1, named libaio.so.1t64 since Ubuntu 24.04. Its folder is registered with ldconfig,
 # as Oracle recommends on Linux, so that its libraries find each other (e.g. libnnz.so).
 ARG ORACLE_INSTANT_CLIENT_URL=https://download.oracle.com/otn_software/linux/instantclient/2326400/instantclient-basiclite-linux.x64-23.26.4.0.0.zip
