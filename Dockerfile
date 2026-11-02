@@ -193,7 +193,8 @@ RUN pipx install semgrep==1.177.0
 # Oracle Instant Client (Basic Light), for the Oracle MCP server (claude-mcp-oracle, see README, "MCP gateway"):
 # oracledb runs in thick mode, since the SpiGes databases require the native network encryption of Oracle, which the
 # thin mode doesn't support. Official download of Oracle, pinned by its SHA-256 (published on the download page).
-# Instant Client looks for libaio.so.1, named libaio.so.1t64 since Ubuntu 24.04.
+# Instant Client looks for libaio.so.1, named libaio.so.1t64 since Ubuntu 24.04. Its folder is registered with ldconfig,
+# as Oracle recommends on Linux, so that its libraries find each other (e.g. libnnz.so).
 ARG ORACLE_INSTANT_CLIENT_URL=https://download.oracle.com/otn_software/linux/instantclient/2326400/instantclient-basiclite-linux.x64-23.26.4.0.0.zip
 ARG ORACLE_INSTANT_CLIENT_SHA256=d049e593bba0041feb15c14ea894e2f1a437377462b99d9bdb6b7ab30b2dd660
 RUN curl -fsSL -o /tmp/instantclient.zip "$ORACLE_INSTANT_CLIENT_URL" \
@@ -202,7 +203,9 @@ RUN curl -fsSL -o /tmp/instantclient.zip "$ORACLE_INSTANT_CLIENT_URL" \
     && unzip -q /tmp/instantclient.zip -d /opt/oracle \
     && mv /opt/oracle/instantclient_* /opt/oracle/instantclient \
     && rm /tmp/instantclient.zip \
-    && ln -s /usr/lib/x86_64-linux-gnu/libaio.so.1t64 /usr/lib/x86_64-linux-gnu/libaio.so.1
+    && ln -s /usr/lib/x86_64-linux-gnu/libaio.so.1t64 /usr/lib/x86_64-linux-gnu/libaio.so.1 \
+    && echo /opt/oracle/instantclient > /etc/ld.so.conf.d/oracle-instantclient.conf \
+    && ldconfig
 # Virtual environment of the Oracle MCP server: oracledb (thick mode, with the Instant Client above) and its
 # dependencies, pinned with their hashes.
 COPY broker/oracle-requirements.txt /opt/claude-mcp-oracle/requirements.txt
