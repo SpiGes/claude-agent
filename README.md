@@ -387,12 +387,13 @@ For an installation from before the broker: the Git tokens of `.env` (`GIT_CONFI
 
 ## MCP gateway
 
-The MCP servers of Azure DevOps, Jira, and Confluence don't run in the agent container, and their tokens (`DEVOPS_PAT`, `JIRA_PERSONAL_TOKEN`, `CONFLUENCE_PERSONAL_TOKEN`) aren't in the environment of the agent. Each one runs in a container of its own, with its token only, and the agent reaches them through a gateway that checks every tool call.
+The MCP servers of Azure DevOps, Jira, and Confluence don't run in the agent container, and their tokens (`DEVOPS_PAT`, `JIRA_PERSONAL_TOKEN`, `CONFLUENCE_PERSONAL_TOKEN`) aren't in the environment of the agent. Each one runs in a container of its own, with its token only, and the agent reaches them through a gateway that checks every tool call. The same goes for the services written for the agent, as small MCP servers (`broker/mcp_server.py`, standard library only): Keycloak, whose client secrets (`SPIGES_KEYCLOAK_*_CLIENT_SECRET`) only give the skills short-lived tokens.
 
 ```
 agent container ──► claude-gateway ──► claude-mcp-devops     (DEVOPS_PAT)                ──► Azure DevOps Server
                    (groups,         ──► claude-mcp-jira       (JIRA_PERSONAL_TOKEN)       ──► Jira Data Center
                     approvals)      ──► claude-mcp-confluence (CONFLUENCE_PERSONAL_TOKEN) ──► Confluence Data Center
+                                    ──► claude-mcp-keycloak   (Keycloak client secrets)   ──► Keycloak (REF, TST)
                                         (each on a network of its own, shared with the gateway only)
 ```
 
@@ -401,12 +402,16 @@ agent container ──► claude-gateway ──► claude-mcp-devops     (DEVOPS
 | `devops` (`mcp-devops-onpremise`) | `devops` | Read tools go through while the group is open; writes need an approval; deletion, wiki, and repository tools are refused |
 | `jira` (`mcp-atlassian --read-only`) | `jira` | Read only: read tools go through while the group is open; any other tool is refused, without approval |
 | `confluence` (`mcp-atlassian`) | `confluence` | Read tools go through while the group is open; writes need an approval; page deletion, page moves, and restriction changes are refused |
+| `keycloak` (`claude-mcp-keycloak`) | `keycloak` | Read only: `keycloak_token` (short-lived token of a profile) and `keycloak_profiles` go through while the group is open; called by the skill scripts through `mcp-call`, not by Claude Code, so that a token never reaches the conversation |
+
+- **mcp-call**: `mcp-call <server> <tool> [<arguments as JSON>]` calls one tool through the gateway from a script, and prints the text of its result (tool error: exit code 1, on stderr). A skill uses it when the result mustn't reach the conversation, e.g. `token=$(mcp-call keycloak keycloak_token '{"profile": "bfs"}')`.
+- **Keycloak server**: it reads the profiles from the clients file (`<profile>=<client id>` lines, no secret), `$AGENT_KEYCLOAK_CLIENTS_FILE` (default `$SHARED_BASE_DIR/backend-run/keycloak-clients.txt`), mounted read only: after a change of the file, `claude_mcp restart keycloak`. The secret of a profile is `SPIGES_KEYCLOAK_<PROFILE>_CLIENT_SECRET`, or else the shared `SPIGES_KEYCLOAK_USER_CLIENT_SECRET`. A token is cached until one minute before its expiry.
 
 ### How it works
 
 - **Containers without coupling**: `claude_gateway` starts the gateway, `claude_mcp start <server>` an MCP server; neither starts the other, and `claude_dev` starts neither. A missing container only makes the calls that need it fail, with the command to run. After a restart of Docker, `claude_mcp start <server>` is run again for each server (the gateway restarts by itself, with every group closed). `claude_gateway` restarts a gateway started from an older image or with other routes.
 - **Networks**: the gateway is on the network of the agents (`http://claude-gateway:8090/mcp/<server>`, the servers of `profiles/dev/mcp.json`). Each MCP server has a Docker network of its own, `<AGENT_MCP_NETWORK_PREFIX>-<server>` (default `bfs-claude-agent-mcp-<server>`), whose only members are its container and the gateway; the server reaches its remote service through it. The MCP servers have no authentication: Docker isolates the networks from each other, so neither the agent, nor another MCP container, nor a container started without `--network` reaches them. `claude_mcp start` creates the network and connects the gateway when it runs; `claude_gateway` connects to the networks created before it.
-- **Tokens**: the tokens are secrets of type 2 of the secrets file of the broker. The broker never hands them out on the network: `claude_mcp start` reads the token of the server through `docker exec` (`claude-broker ctl export`), and writes it straight into the tmpfs of the MCP container, through a pipe between two `docker exec`. The server reads it and removes the file: the token is neither on a disk nor in the configuration of the container (`docker inspect`), only in the memory of the server.
+- **Tokens**: the tokens are secrets of type 2 of the secrets file of the broker. The broker never hands them out on the network: `claude_mcp start` reads the secrets of the server through `docker exec` (`claude-broker ctl export`, one or several per server), and writes them as `KEY=value` lines straight into the tmpfs of the MCP container, through a pipe between two `docker exec`. The server reads them and the file is removed: they're neither on a disk nor in the configuration of the container (`docker inspect`), only in the memory of the server.
 - **Jira and Confluence servers**: `mcp-atlassian` runs one service per container, so that each container holds one token. Over HTTP, it refuses by default a request without credentials of its own, so that an unknown caller doesn't act with the token of the server: `ALLOW_GLOBAL_CRED_FALLBACK=true` lets it serve the gateway, which is the only one to reach it and forwards no credential header (only the headers of the MCP transport go through). The token reaches `mcp-atlassian` through a file of settings (`--env-file` in the tmpfs, removed by `claude_mcp start` once the server listens), never through its environment: the initial environment of a process (`/proc/self/environ`) is a file, which a tool that reads files could reach.
 - **Confluence drop folder**: the page body (`content_file`) and the attachments (`file_path`, `file_paths`) are read by the Confluence server from files. It only reads them under its working folder, `/shared/mcp-confluence` (`$AGENT_MCP_CONFLUENCE_DIR`, default `$SHARED_BASE_DIR/mcp-confluence`), mounted read only at the same path as in the agent: a path outside it is refused by the server, symbolic links included. The `confluence-publish` skill copies the files there before the publication, and they can be opened on the host before an approval.
 - **Requests that always go through**: the opening of the session (`initialize`, notifications, `tools/list`), the stream of the server (`GET`), and the end of the session (`DELETE`), so that Claude Code lists the tools from its start. The streamed answers (server-sent events) are forwarded as they come.
@@ -418,7 +423,7 @@ agent container ──► claude-gateway ──► claude-mcp-devops     (DEVOPS
 
 ### Setup
 
-1. The tokens are added to the secrets file (`claude_secret edit`: `DEVOPS_PAT`, `JIRA_PERSONAL_TOKEN`, `CONFLUENCE_PERSONAL_TOKEN`), and removed from `.env`.
+1. The tokens are added to the secrets file (`claude_secret edit`: `DEVOPS_PAT`, `JIRA_PERSONAL_TOKEN`, `CONFLUENCE_PERSONAL_TOKEN`, `SPIGES_KEYCLOAK_USER_CLIENT_SECRET`, `SPIGES_KEYCLOAK_SAS_CLIENT_SECRET`, `SPIGES_KEYCLOAK_SPIGES_CLIENT_SECRET`), and removed from `.env`.
 2. The image is rebuilt, then: `claude_broker` (unlock), `claude_gateway`, and `claude_mcp start <server>` for each server.
 3. A workspace that declares the Jira server in its own `.mcp.json` points it to the gateway: `"jira": {"type": "http", "url": "http://claude-gateway:8090/mcp/jira", "timeout": 180000}`.
 4. `claude_dev`; when the gateway or an MCP container started after the agent, `/mcp` in Claude Code reconnects the server.

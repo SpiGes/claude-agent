@@ -32,7 +32,9 @@ export AGENT_GATEWAY_LOG_DIR="${AGENT_GATEWAY_LOG_DIR:-$AGENT_HOMES_DIR/gateway}
 export GATEWAY_APPROVAL_SECONDS="${GATEWAY_APPROVAL_SECONDS:-120}"
 # MCP servers started by claude_mcp, and the drop folder of the Confluence server (the files it reads: page bodies and
 # attachments), under /shared so that the agent writes there and the person opens them before an approval.
-export AGENT_MCP_SERVERS="devops jira confluence"
+export AGENT_MCP_SERVERS="devops jira confluence keycloak"
+# Profiles of the SpiGes Keycloak clients (<profile>=<client id>, no secret), read by the Keycloak MCP server.
+export AGENT_KEYCLOAK_CLIENTS_FILE="${AGENT_KEYCLOAK_CLIENTS_FILE:-$SHARED_BASE_DIR/backend-run/keycloak-clients.txt}"
 export AGENT_MCP_CONFLUENCE_DIR="${AGENT_MCP_CONFLUENCE_DIR:-$SHARED_BASE_DIR/mcp-confluence}"
 
 # Name that starts each notification of an agent: the name of its workspace folder, or of the folder
@@ -341,10 +343,10 @@ _claude_gateway_routes(){
 
 # Starts the MCP gateway (see README, "MCP gateway") unless it's running: on the network of the agents, which reach
 # it at http://claude-gateway:8090/mcp/<name>, and on the network of each MCP server created so far (claude_mcp
-# connects it to the networks created later). It holds no secret: its groups (devops, jira, confluence) and the
-# waiting write calls are lost when it restarts, every group is then closed. A gateway started from an older image, or
-# with other routes (e.g. a server added to launch.sh), is restarted. It doesn't start the MCP containers (claude_mcp),
-# nor is it started by claude_dev.
+# connects it to the networks created later). It holds no secret: its groups (devops, jira, confluence, keycloak) and
+# the waiting write calls are lost when it restarts, every group is then closed. A gateway started from an older image,
+# or with other routes (e.g. a server added to launch.sh), is restarted. It doesn't start the MCP containers
+# (claude_mcp), nor is it started by claude_dev.
 claude_gateway(){
     _claude_network || return
     if _claude_outdated claude-gateway; then
@@ -397,9 +399,9 @@ claude_gateway_stop(){
     fi
 }
 
-# MCP servers moved out of the agent container (see README, "MCP gateway"): command line, settings, the secret of
-# type 2 that the server gets from the secret broker, the port it listens on, then the other arguments of docker run
-# (settings, mounts), one per line.
+# MCP servers moved out of the agent container (see README, "MCP gateway"): command line, the secrets of type 2 that
+# the server gets from the secret broker (names separated by spaces), the port it listens on, then the other arguments
+# of docker run (settings, mounts), one per line.
 #
 # mcp-atlassian runs one service per container (Jira or Confluence), so that each container holds one token. Over
 # HTTP, it refuses by default a request that brings no credentials of its own (ALLOW_GLOBAL_CRED_FALLBACK): here, only
@@ -421,6 +423,16 @@ _claude_mcp_spec(){
               -e JIRA_URL=https://intranet.jira.bfs.admin.ch/jira \
               -e TOOLSETS=all -e ALLOW_GLOBAL_CRED_FALLBACK=true -e MCP_SECRET_FILE=1
             ;;
+        keycloak)
+            # Server of the agent (broker/claude_mcp_keycloak.py): short-lived tokens of the SpiGes Keycloak clients.
+            # The clients file (<profile>=<client id>, no secret) is mounted read only; after a change of the file,
+            # claude_mcp restart keycloak.
+            local secrets="SPIGES_KEYCLOAK_USER_CLIENT_SECRET SPIGES_KEYCLOAK_SAS_CLIENT_SECRET"
+            secrets+=" SPIGES_KEYCLOAK_SPIGES_CLIENT_SECRET"
+            printf '%s\n' "claude-mcp-keycloak serve --port 8000" "$secrets" 8000 \
+              -e MCP_SECRET_FILE=1 -e KEYCLOAK_CLIENTS_FILE=/config/keycloak-clients.txt \
+              -v "$AGENT_KEYCLOAK_CLIENTS_FILE:/config/keycloak-clients.txt:ro"
+            ;;
         confluence)
             printf '%s\n' "$atlassian" CONFLUENCE_PERSONAL_TOKEN 8000 \
               -e CONFLUENCE_URL=https://intranet.confluence.bfs.admin.ch/confluence \
@@ -435,7 +447,7 @@ _claude_mcp_spec(){
 }
 
 # Starts, stops, or restarts the container of an MCP server (see README, "MCP gateway"):
-#   claude_mcp start|stop|restart <server>   (servers: devops, jira, confluence)
+#   claude_mcp start|stop|restart <server>   (servers: devops, jira, confluence, keycloak)
 # The container starts without its token, on the network of the server, shared with the gateway only (connected to it
 # when it runs). Its token is then read from the secret broker (ctl export, through docker exec) and written
 # straight into the tmpfs of the container, through a pipe between two docker exec: no variable, no file on the host,
@@ -475,20 +487,21 @@ claude_mcp(){
     if [ "$name" = confluence ]; then
         mkdir -p "$AGENT_MCP_CONFLUENCE_DIR" || return
     fi
-    # The server waits for its token (at most a minute), then replaces the shell. With MCP_SECRET_FILE=1, the token is
-    # handed through a file of settings (--env-file), loaded by the server and removed once it listens, so that it's
-    # never in the initial environment of the server (/proc/self/environ), which a tool reading files could reach.
-    # Otherwise it's exported to the server.
+    # A missing file would be created by docker run as a folder.
+    if [ "$name" = keycloak ] && [ ! -f "$AGENT_KEYCLOAK_CLIENTS_FILE" ]; then
+        echo "No Keycloak clients file ($AGENT_KEYCLOAK_CLIENTS_FILE): see AGENT_KEYCLOAK_CLIENTS_FILE." >&2
+        return 1
+    fi
+    # The server waits for its secrets (a file of KEY=value lines, at most a minute), then replaces the shell. With
+    # MCP_SECRET_FILE=1, the file is given to the server (--env-file), which loads it, and it's removed once the server
+    # listens, so that the secrets are never in the initial environment of the server (/proc/self/environ), which a
+    # tool reading files could reach. Otherwise they're exported to the server (export of the line, no evaluation).
     local start_script='
-        for i in $(seq 300); do [ -s /tmp/mcp-token ] && break; sleep 0.2; done
-        [ -s /tmp/mcp-token ] || { echo "no token received" >&2; exit 1; }
-        if [ "${MCP_SECRET_FILE:-0}" = 1 ]; then
-            (umask 077; printf "%s=%s\n" "$MCP_SECRET_NAME" "$(cat /tmp/mcp-token)" > /tmp/mcp-env)
-            rm -f /tmp/mcp-token
-            exec $MCP_COMMAND --env-file /tmp/mcp-env
-        fi
-        export "$MCP_SECRET_NAME=$(cat /tmp/mcp-token)"
-        rm -f /tmp/mcp-token
+        for i in $(seq 300); do [ -s /tmp/mcp-env ] && break; sleep 0.2; done
+        [ -s /tmp/mcp-env ] || { echo "no secret received" >&2; exit 1; }
+        [ "${MCP_SECRET_FILE:-0}" = 1 ] && exec $MCP_COMMAND --env-file /tmp/mcp-env
+        while IFS= read -r line; do export "$line"; done < /tmp/mcp-env
+        rm -f /tmp/mcp-env
         exec $MCP_COMMAND'
     docker run -d --name "$container" \
       --network "$network" \
@@ -497,25 +510,31 @@ claude_mcp(){
       --cap-drop ALL --security-opt no-new-privileges \
       --read-only --tmpfs /tmp:mode=1777 \
       -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 \
-      -e MCP_SECRET_NAME="${spec[1]}" -e MCP_COMMAND="${spec[0]}" "${spec[@]:3}" \
+      -e MCP_COMMAND="${spec[0]}" "${spec[@]:3}" \
       --entrypoint sh \
       bfs-claude-agent -c "$start_script" >/dev/null || return
     if _claude_running claude-gateway; then
         _claude_gateway_join "$network" || return
     fi
-    # The token goes from the broker to the tmpfs of the MCP container, without touching the host. In a subshell with
-    # pipefail, so that a failed export isn't hidden by the second command of the pipe.
+    # The secrets go from the broker to the tmpfs of the MCP container, as KEY=value lines, without touching the host:
+    # no variable, no file. In a subshell with pipefail, so that a failed export isn't hidden by the second command of
+    # the pipe; the container is then removed, with the partial file.
+    local -a secret_names
+    read -ra secret_names <<< "${spec[1]}"
     if ! (
         set -o pipefail
-        _claude_broker_ctl export "${spec[1]}" \
-          | docker exec -i "$container" sh -c 'umask 077; cat > /tmp/mcp-token.part && mv /tmp/mcp-token.part /tmp/mcp-token'
+        for secret_name in "${secret_names[@]}"; do
+            printf '%s=' "$secret_name"
+            _claude_broker_ctl export "$secret_name" || exit 1
+        done | docker exec -i "$container" sh -c \
+          'umask 077; cat > /tmp/mcp-env.part && mv /tmp/mcp-env.part /tmp/mcp-env'
     ); then
-        echo "The token ${spec[1]} couldn't be handed to the MCP server $name: is it in the secrets file?" >&2
+        echo "The secrets ${spec[1]} couldn't be handed to the MCP server $name: are they in the secrets file?" >&2
         docker stop "$container" >/dev/null 2>&1; docker rm "$container" >/dev/null 2>&1
         return 1
     fi
     _claude_mcp_wait "$container" "${spec[2]}" || return
-    # The server has loaded its file of settings before it listens: the token now only stays in its memory.
+    # The server has loaded its file of settings before it listens: the secrets now only stay in its memory.
     if ! docker exec "$container" rm -f /tmp/mcp-env; then
         echo "The settings file of the MCP server $name couldn't be removed: the server is stopped." >&2
         docker stop "$container" >/dev/null 2>&1; docker rm "$container" >/dev/null 2>&1
@@ -547,7 +566,7 @@ except OSError:
 }
 
 # Commands of the secret broker and of the MCP gateway (see README, "Secret broker", "MCP gateway"):
-#   claude_secret allow <group>           opens a group: git, gh (broker); devops, jira, confluence (gateway)
+#   claude_secret allow <group>           opens a group: git, gh (broker); devops, jira, confluence, keycloak (gateway)
 #   claude_secret revoke <group>|all      closes a group, or every group of both
 #   claude_secret status                  state of the broker and of the gateway, and the waiting write calls
 #   claude_secret pending                 waiting write calls of the gateway

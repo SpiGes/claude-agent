@@ -223,10 +223,19 @@ CONFLUENCE_POLICY: Final = Policy(
     ),
 )
 
+# Keycloak (claude-mcp-keycloak): short-lived access tokens, read by the skill scripts through mcp-call; no write.
+KEYCLOAK_POLICY: Final = Policy(
+    group="keycloak",
+    label="Keycloak",
+    read_tools=frozenset({"keycloak_profiles", "keycloak_token"}),
+    writes_allowed=False,
+)
+
 POLICIES: Final[Mapping[str, Policy]] = {
     "devops": DEVOPS_POLICY,
     "jira": JIRA_POLICY,
     "confluence": CONFLUENCE_POLICY,
+    "keycloak": KEYCLOAK_POLICY,
 }
 
 
