@@ -26,7 +26,8 @@ The results are JSON objects (CSV text, numbers of rows and columns, messages). 
 that starts with "rejected:", a write rolled back for its number of rows one that starts with "rolled back:".
 
 Installed in the image as /usr/local/bin/claude-mcp-oracle, run with the Python of its virtual environment
-(/opt/claude-mcp-oracle, with oracledb). Usage:
+(/opt/claude-mcp-oracle, with oracledb in thick mode, on the Instant Client of /opt/oracle/instantclient: the SpiGes
+databases require the native network encryption of Oracle, which the thin mode doesn't support). Usage:
     claude-mcp-oracle serve --env-file <file> [--port <port>]
 """
 
@@ -282,10 +283,18 @@ class Account:
     data_source: str
 
 
+INSTANT_CLIENT_DIR: Final = "/opt/oracle/instantclient"
+
+
 def connect_oracle(user: str, password: str, data_source: str) -> Connection:  # pragma: no cover - needs a database
-    """Open an Oracle connection in thin mode (no Oracle client)."""
+    """Open an Oracle connection in thick mode, with the Instant Client of the image.
+
+    The SpiGes databases require the native network encryption of Oracle, which only the thick mode supports.
+    """
     import oracledb  # noqa: PLC0415  # only in the virtual environment of the server
 
+    if oracledb.is_thin_mode():
+        oracledb.init_oracle_client(lib_dir=INSTANT_CLIENT_DIR)
     # NUMBER as Decimal (exact, as the client prints it), LOBs as str and bytes.
     oracledb.defaults.fetch_decimals = True
     oracledb.defaults.fetch_lobs = False

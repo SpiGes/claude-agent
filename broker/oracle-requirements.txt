@@ -1,5 +1,6 @@
 # Packages of the Oracle MCP server (claude-mcp-oracle), installed in its own virtual environment of the image,
-# with --require-hashes. oracledb runs in thin mode (no Oracle client); the others are its dependencies.
+# with --require-hashes. oracledb runs in thick mode, on the Instant Client of the image; the others are its
+# dependencies.
 # Each version is at least two weeks old and was checked on OSV (no known advisory) when it was added.
 oracledb==26.0.1 \
     --hash=sha256:03424ccfbd25c402133c2a23c5c1a630e57effda7b962085d91c41d765af1b25 \
