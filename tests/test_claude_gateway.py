@@ -260,6 +260,11 @@ class SummarizeTest(unittest.TestCase):
             summarize({"pull_request_id": 44283, "content": "long text", "nested": {"a": 1}, "status": "fixed"}),
             "pull_request_id=44283, status=fixed",
         )
+        # The SQL of the Oracle server may hold values (e.g. test data): never in the log.
+        self.assertEqual(
+            summarize({"environment": "ref", "sql": "INSERT INTO t VALUES ('a name')", "expect_rows": 1}),
+            "environment=ref, expect_rows=1",
+        )
         self.assertEqual(summarize("not arguments"), "")
         self.assertTrue(summarize({"title": "x" * 200}).endswith("…"))
         self.assertLessEqual(len(summarize({f"k{n}": "v" * 50 for n in range(10)})), 160)

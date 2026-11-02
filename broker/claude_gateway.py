@@ -67,7 +67,7 @@ STREAM_CHUNK_BYTES: Final = 64 * 1024
 REQUEST_HEADERS: Final = ("Content-Type", "Accept", "Mcp-Session-Id", "Mcp-Protocol-Version", "Last-Event-Id")
 RESPONSE_HEADERS: Final = ("Content-Type", "Mcp-Session-Id", "Cache-Control")
 SUMMARY_SKIPPED_KEYS: Final = frozenset(
-    {"content", "new_content", "content_base64", "text", "body", "description", "comment", "value", "patch"}
+    {"content", "new_content", "content_base64", "text", "body", "description", "comment", "value", "patch", "sql"}
 )
 # Arguments of a waiting write call that `pending` shows by their length only (encoded files, unreadable as text).
 DETAILS_ELIDED_KEYS: Final = frozenset({"content_base64"})
