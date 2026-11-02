@@ -372,8 +372,14 @@ class ServiceTest(BrokerTestCase):
             self.assertEqual(http_call(port, "GET", "/other")[0], 404)
             self.assertEqual(http_call(port, "POST", "/other", "x")[0], 404)
             self.assertEqual(http_call(port, "POST", "/v1/git", "x", {"Content-Length": "abc"})[0], 400)
-            too_large = "x" * (claude_broker.MAX_REQUEST_BYTES + 1)
-            self.assertEqual(http_call(port, "POST", "/v1/git", too_large)[0], 413)
+            # Announced, not sent: the broker answers on the Content-Length, before the body, so that a client still
+            # sending a large body could get a broken pipe, depending on timing.
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            connection.putrequest("POST", "/v1/git")
+            connection.putheader("Content-Length", str(claude_broker.MAX_REQUEST_BYTES + 1))
+            connection.endheaders()
+            self.assertEqual(connection.getresponse().status, 413)
+            connection.close()
         log = "\n".join(logs.output)
         self.assertIn("git https://devops-server.admin.ch (GIT_1): allowed", log)
         self.assertIn("gh: refused (invalid owner)", log)
