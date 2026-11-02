@@ -34,11 +34,26 @@ conversion:
   MCP server resolves to the page attachment of the same name.
 - The body is passed with `content_format: "markdown"`, through `content_file` when it is long.
 
+## Drop folder
+
+The Confluence MCP server runs in a container of its own: it only reads files under the drop
+folder `/shared/mcp-confluence`, which is mounted read only there at the same path. A path
+outside it (e.g. in a repository under `/workspace`) is refused by the server.
+
+- Before the publication, the page body (when passed through `content_file`) and the images to
+  upload are copied to `/shared/mcp-confluence/<document name>/`, a folder emptied first, so
+  that no file of an earlier publication is uploaded by mistake.
+- `content_file` and `file_paths` give the absolute paths of these copies.
+- The person can open these files on the host before approving the write calls on the MCP
+  gateway.
+- The folder of the document is deleted once the publication is checked.
+
 ## Publication steps
 
 1. The page is created (`confluence_create_page`) or updated (`confluence_update_page`).
 2. All the images referenced by the document are uploaded as attachments of that page, in a
-   single `confluence_upload_attachments` call with the page id. An attachment that already
+   single `confluence_upload_attachments` call with the page id and the paths of their copies in
+   the drop folder. An attachment that already
    exists with the same name gets a new version, so an image changed in the repository replaces
    the old one on the page.
 3. For a new page, the page is updated once more with the same body, so that the image

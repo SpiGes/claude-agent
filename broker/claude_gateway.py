@@ -2,11 +2,11 @@
 """MCP gateway of the agent (see README, "MCP gateway").
 
 Runs in its own container (claude-gateway, started by launch.sh), on the Docker network of the agents and on the
-internal network of the MCP containers, which the agent can't reach. It forwards the MCP requests of the agent
-(streamable HTTP transport, streamed answers included) to the MCP container of the route, and controls the tool
-calls (`tools/call`):
+network of each MCP container, which the agent can't reach. It forwards the MCP requests of the agent (streamable
+HTTP transport, streamed answers included) to the MCP container of the route, and controls the tool calls
+(`tools/call`):
 
-- a tool refused by the policy of the route is refused
+- a tool refused by the policy of the route is refused, as is any write tool of a read-only route (Jira)
 - a read tool goes through while the group of the route is open
 - any other tool is a write: it goes through while the group is open, and only once the person approved it on the
   host (claude_secret approve), or it's refused after GATEWAY_APPROVAL_SECONDS
@@ -34,6 +34,8 @@ import json
 import logging
 import os
 import re
+import select
+import socket
 import sys
 import threading
 import time
@@ -63,31 +65,44 @@ STREAM_CHUNK_BYTES: Final = 64 * 1024
 # Request and answer headers of the streamable HTTP transport, forwarded as they are; no other header goes through.
 REQUEST_HEADERS: Final = ("Content-Type", "Accept", "Mcp-Session-Id", "Mcp-Protocol-Version", "Last-Event-Id")
 RESPONSE_HEADERS: Final = ("Content-Type", "Mcp-Session-Id", "Cache-Control")
-SUMMARY_SKIPPED_KEYS: Final = frozenset({"content", "text", "body", "description", "comment", "value", "patch"})
+SUMMARY_SKIPPED_KEYS: Final = frozenset(
+    {"content", "new_content", "content_base64", "text", "body", "description", "comment", "value", "patch"}
+)
+# Arguments of a waiting write call that `pending` shows by their length only (encoded files, unreadable as text).
+DETAILS_ELIDED_KEYS: Final = frozenset({"content_base64"})
 SUMMARY_MAX_LENGTH: Final = 160
 SUMMARY_MAX_VALUE_LENGTH: Final = 60
 # Arguments of a waiting write call shown by `pending`, in full up to this length: the person sees what is written.
 DETAILS_MAX_LENGTH: Final = 4000
 TOOL_ALLOWANCE_PATTERN: Final = re.compile(r"(\d{1,3})m")
+# Container of an agent, named claude-agent-<profile>-<slot> by launch.sh; Docker DNS adds the network to the name.
+AGENT_CONTAINER_PATTERN: Final = re.compile(r"claude-agent-([a-z0-9]+)-(\d+)(?:\.|$)")
+UNKNOWN_AGENT: Final = "an unknown agent"
 
 LOGGER: Final = logging.getLogger("claude-gateway")
 
 
 @dataclass(frozen=True, slots=True)
 class Policy:
-    """Tools of an MCP server: the read tools, and the tools refused by the gateway; any other tool is a write."""
+    """Tools of an MCP server: the read tools, and the tools refused by the gateway; any other tool is a write.
+
+    A read-only server (`writes_allowed=False`) has no write: any tool that isn't a read tool is refused.
+    """
 
     group: str
     label: str
     read_tools: frozenset[str]
     denied_tools: frozenset[str] = frozenset()
     denied_prefixes: tuple[str, ...] = ()
+    writes_allowed: bool = True
 
     def classify(self, tool: str) -> str:
-        """Return `denied`, `read` or `write`; an unknown tool is a write."""
+        """Return `denied`, `read` or `write`; an unknown tool is a write, or denied on a read-only server."""
         if tool in self.denied_tools or tool.startswith(self.denied_prefixes):
             return "denied"
-        return "read" if tool in self.read_tools else "write"
+        if tool in self.read_tools:
+            return "read"
+        return "write" if self.writes_allowed else "denied"
 
 
 # Azure DevOps (mcp-devops-onpremise). Denied: the same tools as the deny rules of profiles/dev/settings.json.
@@ -120,7 +135,99 @@ DEVOPS_POLICY: Final = Policy(
     denied_prefixes=("devops_repository_", "devops_wiki_"),
 )
 
-POLICIES: Final[Mapping[str, Policy]] = {"devops": DEVOPS_POLICY}
+# Jira (mcp-atlassian --read-only): read only, so every other tool is refused, without approval. The read tools are
+# those of the server with the readOnlyHint annotation.
+JIRA_POLICY: Final = Policy(
+    group="jira",
+    label="Jira",
+    read_tools=frozenset(
+        {
+            "jira_batch_get_changelogs",
+            "jira_download_attachments",
+            "jira_get_agile_boards",
+            "jira_get_all_projects",
+            "jira_get_board_issues",
+            "jira_get_create_fields",
+            "jira_get_cross_project_dependencies",
+            "jira_get_field_options",
+            "jira_get_issue",
+            "jira_get_issue_dates",
+            "jira_get_issue_development_info",
+            "jira_get_issue_images",
+            "jira_get_issue_proforma_forms",
+            "jira_get_issue_sla",
+            "jira_get_issue_watchers",
+            "jira_get_issues_development_info",
+            "jira_get_link_types",
+            "jira_get_proforma_form_details",
+            "jira_get_project_components",
+            "jira_get_project_epic_hierarchy",
+            "jira_get_project_fields",
+            "jira_get_project_issue_types",
+            "jira_get_project_issues",
+            "jira_get_project_versions",
+            "jira_get_queue_issues",
+            "jira_get_request_type_fields",
+            "jira_get_request_types",
+            "jira_get_service_desk_for_project",
+            "jira_get_service_desk_queues",
+            "jira_get_sprint_issues",
+            "jira_get_sprints_from_board",
+            "jira_get_transitions",
+            "jira_get_user_profile",
+            "jira_get_worklog",
+            "jira_search",
+            "jira_search_assignable_users",
+            "jira_search_fields",
+            "jira_search_projects",
+        }
+    ),
+    writes_allowed=False,
+)
+
+# Confluence (mcp-atlassian). The read tools are those of the server with the readOnlyHint annotation. Denied: the same
+# tools as the deny rules of profiles/dev/settings.json.
+CONFLUENCE_POLICY: Final = Policy(
+    group="confluence",
+    label="Confluence",
+    read_tools=frozenset(
+        {
+            "confluence_check_content_permissions",
+            "confluence_download_attachment",
+            "confluence_download_content_attachments",
+            "confluence_get_attachments",
+            "confluence_get_comments",
+            "confluence_get_inline_comments",
+            "confluence_get_labels",
+            "confluence_get_page",
+            "confluence_get_page_children",
+            "confluence_get_page_diff",
+            "confluence_get_page_history",
+            "confluence_get_page_images",
+            "confluence_get_page_restrictions",
+            "confluence_get_page_template",
+            "confluence_get_page_views",
+            "confluence_get_space_page_tree",
+            "confluence_get_space_permissions",
+            "confluence_list_page_templates",
+            "confluence_search",
+            "confluence_search_user",
+        }
+    ),
+    denied_tools=frozenset(
+        {
+            "confluence_delete_page",
+            "confluence_move_page",
+            "confluence_set_page_restrictions",
+        }
+    ),
+)
+
+POLICIES: Final[Mapping[str, Policy]] = {
+    "devops": DEVOPS_POLICY,
+    "jira": JIRA_POLICY,
+    "confluence": CONFLUENCE_POLICY,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -216,6 +323,24 @@ def _filtered_json(data: bytes, policy: Policy) -> bytes | None:
     return json.dumps(message, ensure_ascii=False).encode("utf-8")
 
 
+def agent_name(address: str, resolve: Callable[[str], tuple[str, list[str], list[str]]] = socket.gethostbyaddr) -> str:
+    """Return the name of the agent at an address of the Docker network, e.g. `agent dev 2`, from its container name.
+
+    Several agents (slots) share the gateway: the name tells the person which one asks for a write.
+    """
+    try:
+        host = resolve(address)[0]
+    except OSError:
+        return f"{UNKNOWN_AGENT} ({address})"
+    match = AGENT_CONTAINER_PATTERN.match(host)
+    return f"agent {match[1]} {match[2]}" if match else f"{UNKNOWN_AGENT} ({address})"
+
+
+def json_rpc_method(message: object) -> object:
+    """Return the method of a JSON-RPC message, or None."""
+    return cast("dict[str, object]", message).get("method") if isinstance(message, dict) else None
+
+
 def summarize(arguments: object) -> str:
     """Return the main arguments of a tool call (identifiers, short values), for the approval and the log."""
     if not isinstance(arguments, dict):
@@ -233,7 +358,20 @@ def summarize(arguments: object) -> str:
 
 
 def details(arguments: object) -> str:
-    """Return the full arguments of a tool call, indented, for the approval on the host (never logged)."""
+    """Return the full arguments of a tool call, indented, for the approval on the host (never logged).
+
+    An encoded file (e.g. `content_base64`) is replaced by its length: unreadable as text, it would push the other
+    arguments past the length limit.
+    """
+    if isinstance(arguments, dict):
+        arguments = {
+            key: (
+                f"({len(value)} characters of base64)"
+                if key in DETAILS_ELIDED_KEYS and isinstance(value, str)
+                else value
+            )
+            for key, value in cast("dict[str, object]", arguments).items()
+        }
     text = json.dumps(arguments, ensure_ascii=False, indent=2, sort_keys=True)
     if len(text) > DETAILS_MAX_LENGTH:
         text = text[:DETAILS_MAX_LENGTH] + f"\n… (cut, {len(text)} characters in all)"
@@ -242,13 +380,14 @@ def details(arguments: object) -> str:
 
 @dataclass(frozen=True, slots=True)
 class ToolCall:
-    """A write tool call, as shown to the person: group and label of its route, tool, and arguments."""
+    """A write tool call, as shown to the person: group and label of its route, tool, arguments, and calling agent."""
 
     group: str
     label: str
     tool: str
     summary: str
     details: str
+    agent: str = UNKNOWN_AGENT
 
 
 @dataclass(slots=True)
@@ -263,7 +402,7 @@ class PendingCall:
     def describe(self) -> str:
         """Return the line shown by `status`."""
         summary = f" ({self.call.summary})" if self.call.summary else ""
-        return f"  {self.number}: {self.call.label} {self.call.tool}{summary}"
+        return f"  {self.number}: {self.call.agent}, {self.call.label} {self.call.tool}{summary}"
 
     def describe_in_full(self) -> str:
         """Return the lines shown by `pending`: the line of `status`, then the full arguments."""
@@ -298,8 +437,8 @@ class Approvals:
                 return True, "approved for the tool"
             pending = PendingCall(next(self._numbers), call)
             self._pending[pending.number] = pending
-        LOGGER.info("call %s waiting: %s %s (%s)", pending.number, call.label, call.tool, call.summary)
-        self._notifier(f"Écriture {call.label} à approuver : {call.tool}")
+        LOGGER.info("call %s waiting: %s, %s %s (%s)", pending.number, call.agent, call.label, call.tool, call.summary)
+        self._notifier(f"Écriture {call.label} à approuver pour {call.agent} : {call.tool}")
         pending.decided.wait(self._timeout_seconds)
         # The decision is read under the lock that `decide` holds: a decision made just after the wait timed out, but
         # before the call left the list, still counts, so that the person is never told the opposite of what happens.
@@ -388,8 +527,8 @@ class Gateway:
         self.approvals.forget_group(group)
         LOGGER.info("group %s closed (%s)", group, reason)
 
-    def check(self, route: Route, request: object) -> str | None:
-        """Decide on an MCP request: None to forward it, or the reason of the refusal of a tool call."""
+    def check(self, route: Route, request: object, agent: str = UNKNOWN_AGENT) -> str | None:
+        """Decide on an MCP request of an agent: None to forward it, or the reason of the refusal of a tool call."""
         if not isinstance(request, dict):
             return "a single JSON-RPC message is expected"
         message = cast("dict[str, object]", request)
@@ -403,11 +542,13 @@ class Gateway:
         arguments = params_map.get("arguments")
         summary = summarize(arguments)
         kind = route.policy.classify(tool)
-        refusal = self._refusal(route, tool, kind, arguments, summary)
-        LOGGER.info("%s %s %s (%s): %s", route.name, kind, tool, summary, refusal or "allowed")
+        refusal = self._refusal(route, tool, kind, arguments, summary=summary, agent=agent)
+        LOGGER.info("%s %s %s (%s) by %s: %s", route.name, kind, tool, summary, agent, refusal or "allowed")
         return refusal
 
-    def _refusal(self, route: Route, tool: str, kind: str, arguments: object, summary: str) -> str | None:
+    def _refusal(  # noqa: PLR0913  # the facts of one tool call, logged by the caller too
+        self, route: Route, tool: str, kind: str, arguments: object, *, summary: str, agent: str
+    ) -> str | None:
         if kind == "denied":
             return f"the tool {tool} is refused by the MCP gateway"
         try:
@@ -417,7 +558,8 @@ class Gateway:
         if kind == "read":
             return None
         policy = route.policy
-        approved, how = self.approvals.request(ToolCall(policy.group, policy.label, tool, summary, details(arguments)))
+        call = ToolCall(policy.group, policy.label, tool, summary, details(arguments), agent)
+        approved, how = self.approvals.request(call)
         if approved:
             return None
         if how == "denied":
@@ -504,10 +646,10 @@ class GatewayHandler(BaseHTTPRequestHandler):
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
-            self._reply_text(HTTPStatus.BAD_REQUEST, "invalid Content-Length")
+            self._reply_before_body(HTTPStatus.BAD_REQUEST, "invalid Content-Length")
             return
         if not 0 <= length <= MAX_REQUEST_BYTES:
-            self._reply_text(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "request too large")
+            self._reply_before_body(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "request too large")
             return
         body = self.rfile.read(length)
         try:
@@ -515,9 +657,16 @@ class GatewayHandler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             self._reply_text(HTTPStatus.BAD_REQUEST, "invalid JSON")
             return
-        refusal = self._gateway.check(route, request)
+        method = json_rpc_method(request)
+        agent = agent_name(self.client_address[0]) if method == "tools/call" else UNKNOWN_AGENT
+        refusal = self._gateway.check(route, request, agent)
         if refusal is not None:
             self._reply_tool_error(request, refusal)
+            return
+        if method == "tools/call" and self._client_gone():
+            # e.g. a write approved after the agent gave the call up (Esc in Claude Code): never run unknown to it.
+            LOGGER.info("%s call not forwarded: the agent closed its connection while the call was waiting", route.name)
+            self.close_connection = True
             return
         lists_tools = isinstance(request, dict) and cast("dict[str, object]", request).get("method") == "tools/list"
         self._forward(route, body, filter_tools=lists_tools)
@@ -542,8 +691,16 @@ class GatewayHandler(BaseHTTPRequestHandler):
         name = self.path.removeprefix("/mcp/").split("?", 1)[0]
         route = self._gateway.routes.get(name) if self.path.startswith("/mcp/") else None
         if route is None:
-            self._reply_text(HTTPStatus.NOT_FOUND, "unknown path")
+            self._reply_before_body(HTTPStatus.NOT_FOUND, "unknown path")
         return route
+
+    def _client_gone(self) -> bool:
+        """Return whether the agent closed its connection: a closed socket is readable, with nothing to read."""
+        try:
+            readable, _, _ = select.select([self.connection], [], [], 0)
+            return bool(readable) and self.connection.recv(1, socket.MSG_PEEK) == b""
+        except OSError:
+            return True
 
     def _forward(self, route: Route, body: bytes | None, *, filter_tools: bool = False) -> None:
         upstream = urlsplit(route.upstream)
@@ -613,8 +770,19 @@ class GatewayHandler(BaseHTTPRequestHandler):
     def _reply_text(self, status: HTTPStatus, text: str) -> None:
         self._reply(status, "text/plain; charset=utf-8", text.encode("utf-8"))
 
-    def _reply(self, status: HTTPStatus, content_type: str, data: bytes) -> None:
+    def _reply_before_body(self, status: HTTPStatus, text: str) -> None:
+        """Reply without reading the body of the request, then close the connection.
+
+        On a kept-alive connection, the unread body would be read as the start of the next request (400 "Bad request
+        syntax" instead of this answer).
+        """
+        self.close_connection = True
+        self._reply(status, "text/plain; charset=utf-8", text.encode("utf-8"), close=True)
+
+    def _reply(self, status: HTTPStatus, content_type: str, data: bytes, *, close: bool = False) -> None:
         self.send_response(status)
+        if close:
+            self.send_header("Connection", "close")
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()

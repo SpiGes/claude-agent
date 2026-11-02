@@ -231,18 +231,20 @@ RUN chmod +x /usr/local/bin/agent-memory-sync /usr/local/bin/agent-memory-guard
 # Secret broker and MCP gateway (see broker/ and README, "Secret broker", "MCP gateway"): the services of the
 # claude-broker and claude-gateway containers, and the clients of the agent container, a Git credential helper and
 # a wrapper of gh placed before /usr/bin/gh in the PATH. Without BROKER_URL (e.g. in a build container), both
-# clients leave Git and gh as they are. The Python modules stay together in /opt/claude-agent/broker, so that each
+# clients leave Git and gh as they are. age-passphrase runs age with a passphrase read from stdin, for
+# claude_secret edit. The Python modules stay together in /opt/claude-agent/broker, so that each
 # command finds the shared module (access.py) next to it; the commands are links to them.
-COPY broker/access.py broker/claude_broker.py broker/claude_gateway.py broker/git_credential_broker.py \
-    /opt/claude-agent/broker/
+COPY broker/access.py broker/age_passphrase.py broker/claude_broker.py broker/claude_gateway.py \
+    broker/git_credential_broker.py /opt/claude-agent/broker/
 COPY broker/gh /usr/local/bin/gh
 COPY broker/secrets.example /usr/local/share/claude-broker/secrets.example
 RUN chmod 0755 /opt/claude-agent/broker/claude_broker.py /opt/claude-agent/broker/claude_gateway.py \
-        /opt/claude-agent/broker/git_credential_broker.py /usr/local/bin/gh \
+        /opt/claude-agent/broker/git_credential_broker.py /opt/claude-agent/broker/age_passphrase.py /usr/local/bin/gh \
     && chmod 0644 /opt/claude-agent/broker/access.py \
     && ln -s /opt/claude-agent/broker/claude_broker.py /usr/local/bin/claude-broker \
     && ln -s /opt/claude-agent/broker/claude_gateway.py /usr/local/bin/claude-gateway \
-    && ln -s /opt/claude-agent/broker/git_credential_broker.py /usr/local/bin/git-credential-broker
+    && ln -s /opt/claude-agent/broker/git_credential_broker.py /usr/local/bin/git-credential-broker \
+    && ln -s /opt/claude-agent/broker/age_passphrase.py /usr/local/bin/age-passphrase
 
 # Container entrypoint script.
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh

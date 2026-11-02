@@ -1,6 +1,7 @@
 import http.client
 import io
 import json
+import socket
 import tempfile
 import threading
 import unittest
@@ -13,13 +14,17 @@ from unittest import mock
 
 import claude_gateway
 from claude_gateway import (
+    CONFLUENCE_POLICY,
     DEVOPS_POLICY,
+    JIRA_POLICY,
+    POLICIES,
     Approvals,
     Gateway,
     GatewayHTTPServer,
     Route,
     Settings,
     ToolCall,
+    agent_name,
     details,
     parse_routes,
     run_admin_command,
@@ -41,7 +46,7 @@ def tool_call(tool: str, call_id: int = 7, **arguments: object) -> dict[str, obj
 
 
 def write_call(tool: str = "devops_work_item_update", summary: str = "") -> ToolCall:
-    return ToolCall("devops", "DevOps", tool, summary, "{}")
+    return ToolCall("devops", "DevOps", tool, summary, "{}", "agent dev 2")
 
 
 TOOLS_LIST: dict[str, object] = {
@@ -149,6 +154,45 @@ class PolicyTest(unittest.TestCase):
         self.assertEqual(DEVOPS_POLICY.classify("devops_repository_get"), "denied")
         self.assertEqual(DEVOPS_POLICY.classify("devops_wiki_page_get"), "denied")
 
+    def test_classify_jira_read_only(self) -> None:
+        self.assertEqual(JIRA_POLICY.classify("jira_get_issue"), "read")
+        self.assertEqual(JIRA_POLICY.classify("jira_search"), "read")
+        for tool in (
+            "jira_create_issue",
+            "jira_add_comment",
+            "jira_transition_issue",
+            "jira_new_tool_of_a_later_version",
+        ):
+            with self.subTest(tool=tool):
+                self.assertEqual(JIRA_POLICY.classify(tool), "denied")
+
+    def test_classify_confluence(self) -> None:
+        self.assertEqual(CONFLUENCE_POLICY.classify("confluence_get_page"), "read")
+        self.assertEqual(CONFLUENCE_POLICY.classify("confluence_download_attachment"), "read")
+        for tool in (
+            "confluence_update_page",
+            "confluence_upload_attachments",
+            "confluence_new_tool_of_a_later_version",
+        ):
+            with self.subTest(tool=tool):
+                self.assertEqual(CONFLUENCE_POLICY.classify(tool), "write")
+        for tool in ("confluence_delete_page", "confluence_move_page", "confluence_set_page_restrictions"):
+            with self.subTest(tool=tool):
+                self.assertEqual(CONFLUENCE_POLICY.classify(tool), "denied")
+
+    def test_policies_follow_the_rules_of_the_dev_profile(self) -> None:
+        """A tool denied by settings.json is refused by the gateway, a tool that asks for confirmation is a write."""
+        settings = json.loads((Path(__file__).parents[1] / "profiles/dev/settings.json").read_text(encoding="utf-8"))
+        for kind, expected in (("deny", "denied"), ("ask", "write")):
+            for rule in settings["permissions"][kind]:
+                server, _, tool = rule.removeprefix("mcp__").partition("__")
+                if not rule.startswith("mcp__") or server not in POLICIES:
+                    continue
+                # A rule that ends with * stands for every tool of that prefix, e.g. a tool of a later version.
+                name = tool.removesuffix("*") + ("_of_a_later_version" if tool.endswith("*") else "")
+                with self.subTest(rule=rule):
+                    self.assertEqual(POLICIES[server].classify(name), expected)
+
 
 class SettingsTest(unittest.TestCase):
     def test_environment(self) -> None:
@@ -168,12 +212,39 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual((settings.idle_seconds, settings.max_seconds, settings.approval_seconds), (600, 3600, 30))
         self.assertEqual((settings.log_file, settings.admin_socket), (Path("/x/g.log"), Path("/x/a.sock")))
         self.assertEqual(Settings.from_environment({}), Settings())
+        routes = parse_routes(
+            "devops=http://claude-mcp-devops:8000/mcp,jira=http://claude-mcp-jira:8000/mcp,"
+            "confluence=http://claude-mcp-confluence:8000/mcp"
+        )
+        self.assertEqual([route.policy for route in routes], [DEVOPS_POLICY, JIRA_POLICY, CONFLUENCE_POLICY])
 
     def test_invalid_routes(self) -> None:
-        for text in ("jira=http://x/mcp", "devops=https://x/mcp", "devops"):
+        for text in ("unknown=http://x/mcp", "devops=https://x/mcp", "devops"):
             with self.subTest(text=text), self.assertRaisesRegex(ValueError, "invalid route"):
                 parse_routes(text)
         self.assertEqual(parse_routes(" , "), ())
+
+
+class AgentNameTest(unittest.TestCase):
+    def test_name_of_the_container(self) -> None:
+        for host, expected in (
+            ("claude-agent-dev-2.bfs-claude-agent", "agent dev 2"),
+            ("claude-agent-qualitycheck-1", "agent qualitycheck 1"),
+            ("cb52821ed763.bfs-claude-agent", "an unknown agent (172.21.0.4)"),
+            ("claude-agent-dev-x.bfs-claude-agent", "an unknown agent (172.21.0.4)"),
+        ):
+            with self.subTest(host=host):
+
+                def resolve(_: str, host: str = host) -> tuple[str, list[str], list[str]]:
+                    return host, [], []
+
+                self.assertEqual(agent_name("172.21.0.4", resolve), expected)
+
+    def test_address_without_name(self) -> None:
+        def no_name(address: str) -> tuple[str, list[str], list[str]]:
+            raise socket.herror(1, f"no name for {address}")
+
+        self.assertEqual(agent_name("172.21.0.9", no_name), "an unknown agent (172.21.0.9)")
 
 
 class SummarizeTest(unittest.TestCase):
@@ -192,6 +263,15 @@ class SummarizeTest(unittest.TestCase):
         long_text = details({"text": "x" * 5000})
         self.assertTrue(long_text.endswith("characters in all)"))
         self.assertLess(len(long_text), 4100)
+        # An encoded file is shown by its length, so that the other arguments stay visible.
+        attachment = details({"content_base64": "A" * 50000, "content_id": "123", "filename": "a.png"})
+        self.assertEqual(
+            attachment,
+            '{\n  "content_base64": "(50000 characters of base64)",\n  "content_id": "123",\n  "filename": "a.png"\n}',
+        )
+        self.assertEqual(
+            summarize({"content_base64": "A" * 10, "new_content": "x", "filename": "a.png"}), "filename=a.png"
+        )
 
     def test_without_denied_tools(self) -> None:
         expected = [{"name": "devops_work_item_get"}]
@@ -217,7 +297,7 @@ class ApprovalsTest(GatewayTestCase):
         thread = self.decide_soon(self.gateway)
         self.assertEqual(self.gateway.approvals.request(write_call(summary="id=1")), (True, "approved"))
         thread.join()
-        self.assertEqual(self.notifications, ["Écriture DevOps à approuver : devops_work_item_update"])
+        self.assertEqual(self.notifications, ["Écriture DevOps à approuver pour agent dev 2 : devops_work_item_update"])
 
     def test_deny(self) -> None:
         thread = self.decide_soon(self.gateway, "1", approve=False)
@@ -248,7 +328,7 @@ class ApprovalsTest(GatewayTestCase):
         blocked.start()
         while not self.gateway.approvals.pending_lines():
             threading.Event().wait(0.01)
-        self.assertEqual(self.gateway.approvals.pending_lines(), ["  1: DevOps devops_work_item_update"])
+        self.assertEqual(self.gateway.approvals.pending_lines(), ["  1: agent dev 2, DevOps devops_work_item_update"])
         for args, approve, expected in (
             (["9"], True, "no waiting call 9 \\(waiting: 1\\)"),
             (["x"], True, "invalid argument 'x'"),
@@ -294,6 +374,15 @@ class CheckTest(GatewayTestCase):
         self.gateway.allow("devops")
         refusal = self.gateway.check(self.route, tool_call("devops_work_item_delete", id=1))
         self.assertEqual(refusal, "the tool devops_work_item_delete is refused by the MCP gateway")
+
+    def test_write_on_a_read_only_route_is_refused_without_approval(self) -> None:
+        route = Route("jira", "http://127.0.0.1:1/mcp", JIRA_POLICY)
+        gateway = self.make_gateway(route, approval_seconds=5)
+        gateway.allow("jira")
+        refusal = gateway.check(route, tool_call("jira_create_issue", project_key="SIS2"))
+        self.assertEqual(refusal, "the tool jira_create_issue is refused by the MCP gateway")
+        self.assertEqual(gateway.approvals.pending_lines(), [])
+        self.assertIsNone(gateway.check(route, tool_call("jira_get_issue", issue_key="SIS2-472")))
 
     def test_closed_group(self) -> None:
         refusal = self.gateway.check(self.route, tool_call("devops_work_item_get", work_item_id=1))
@@ -357,10 +446,11 @@ class AdminCommandTest(GatewayTestCase):
         while not self.gateway.approvals.pending_lines():
             threading.Event().wait(0.01)
         status = run_admin_command(self.gateway, {"command": "status"})[1]
-        self.assertIn("Waiting calls:\n  1: DevOps devops_work_item_update (work_item_id=3)", status)
+        self.assertIn("Waiting calls:\n  1: an unknown agent, DevOps devops_work_item_update (work_item_id=3)", status)
         self.assertEqual(
             run_admin_command(self.gateway, {"command": "pending"})[1],
-            '  1: DevOps devops_work_item_update (work_item_id=3)\n      {\n        "work_item_id": 3\n      }',
+            "  1: an unknown agent, DevOps devops_work_item_update (work_item_id=3)\n"
+            '      {\n        "work_item_id": 3\n      }',
         )
         ok, message = run_admin_command(self.gateway, {"command": "approve", "args": ["--tool", "5m"]})
         self.assertEqual(
@@ -461,6 +551,44 @@ class HttpTest(GatewayTestCase):
                 response.read()
                 self.assertEqual(response.status, status)
                 connection.close()
+
+    def test_error_before_the_body_closes_the_connection(self) -> None:
+        """The next request on a kept-alive connection isn't read from the unread body of a refused one."""
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        self.addCleanup(connection.close)
+        connection.request("POST", "/mcp/unknown", body=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize"}))
+        response = connection.getresponse()
+        self.assertEqual((response.status, response.read()), (404, b"unknown path"))
+        self.assertEqual(response.getheader("Connection"), "close")
+        # http.client opens a new connection, as an MCP client does after Connection: close.
+        connection.request("POST", "/mcp/devops", body=json.dumps({"jsonrpc": "2.0", "id": 2, "method": "initialize"}))
+        response = connection.getresponse()
+        response.read()
+        self.assertEqual(response.status, 200)
+
+    def test_write_given_up_by_the_agent_is_not_forwarded(self) -> None:
+        """A write approved after the agent closed its connection doesn't reach the MCP server."""
+        self.gateway.allow("devops")
+        body = json.dumps(tool_call("devops_work_item_update", work_item_id=1)).encode()
+        client = socket.create_connection(("127.0.0.1", self.port), timeout=10)
+        client.sendall(
+            b"POST /mcp/devops HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
+            + f"Content-Length: {len(body)}\r\n\r\n".encode()
+            + body
+        )
+        with self.assertLogs("claude-gateway", "INFO") as logs:
+            for _ in range(500):
+                if self.gateway.approvals.pending_lines():
+                    break
+                threading.Event().wait(0.01)
+            client.close()
+            self.gateway.approvals.decide([], approve=True)
+            for _ in range(500):
+                if any("not forwarded" in line for line in logs.output):
+                    break
+                threading.Event().wait(0.01)
+        self.assertTrue(any("not forwarded" in line for line in logs.output), logs.output)
+        self.assertEqual([body for _, body, _ in FakeMcp.received if "tools/call" in body], [])
 
     def test_unreachable_mcp_server(self) -> None:
         route = Route("devops", "http://127.0.0.1:1/mcp", DEVOPS_POLICY)

@@ -30,6 +30,10 @@ export BROKER_MAX_HOURS="${BROKER_MAX_HOURS:-4}"
 export AGENT_MCP_NETWORK_PREFIX="${AGENT_MCP_NETWORK_PREFIX:-bfs-claude-agent-mcp}"
 export AGENT_GATEWAY_LOG_DIR="${AGENT_GATEWAY_LOG_DIR:-$AGENT_HOMES_DIR/gateway}"
 export GATEWAY_APPROVAL_SECONDS="${GATEWAY_APPROVAL_SECONDS:-120}"
+# MCP servers started by claude_mcp, and the drop folder of the Confluence server (the files it reads: page bodies and
+# attachments), under /shared so that the agent writes there and the person opens them before an approval.
+export AGENT_MCP_SERVERS="devops jira confluence"
+export AGENT_MCP_CONFLUENCE_DIR="${AGENT_MCP_CONFLUENCE_DIR:-$SHARED_BASE_DIR/mcp-confluence}"
 
 # Name that starts each notification of an agent: the name of its workspace folder, or of the folder
 # above it when the workspace is a "branch" folder (e.g. backend/branch gives "backend"). AGENT_NOTIFY_NAME
@@ -176,9 +180,15 @@ _claude_agent()(
         fi
     fi
 
+    # Name of the container: one per profile and slot (the slot lock makes it unique). The MCP gateway finds it from
+    # the address of a call (Docker DNS), to tell the person which agent asks for a write. A stopped container left
+    # with this name (e.g. after a crash of Docker) is removed; a running one isn't (docker rm without -f).
+    local name="claude-agent-$profile-$slot"
+    docker rm "$name" >/dev/null 2>&1
+
     # Home: one per slot. Claude Code projects (memory and session transcripts): one folder for every slot of
     # the profile, so that the agents share their memory and a session can be resumed from any slot.
-    docker run -it --rm --user $(id -u):$(id -g) \
+    docker run -it --rm --name "$name" --user $(id -u):$(id -g) \
       --network "$AGENT_NETWORK" \
       -e BROKER_URL=http://claude-broker:8080 \
       -e HOME=/root \
@@ -320,15 +330,30 @@ _claude_gateway_ctl(){
     docker exec -i claude-gateway claude-gateway ctl "$@"
 }
 
+# Routes of the gateway, one per MCP server: <server>=http://claude-mcp-<server>:8000/mcp,...
+_claude_gateway_routes(){
+    local name routes=()
+    for name in $AGENT_MCP_SERVERS; do
+        routes+=("$name=http://claude-mcp-$name:8000/mcp")
+    done
+    (IFS=,; echo "${routes[*]}")
+}
+
 # Starts the MCP gateway (see README, "MCP gateway") unless it's running: on the network of the agents, which reach
 # it at http://claude-gateway:8090/mcp/<name>, and on the network of each MCP server created so far (claude_mcp
-# connects it to the networks created later). It holds no secret:
-# its groups (devops) and the waiting write calls are lost when it restarts, every group is then closed. It doesn't
-# start the MCP containers (claude_mcp), nor is it started by claude_dev.
+# connects it to the networks created later). It holds no secret: its groups (devops, jira, confluence) and the
+# waiting write calls are lost when it restarts, every group is then closed. A gateway started from an older image, or
+# with other routes (e.g. a server added to launch.sh), is restarted. It doesn't start the MCP containers (claude_mcp),
+# nor is it started by claude_dev.
 claude_gateway(){
     _claude_network || return
     if _claude_outdated claude-gateway; then
         echo "The image was rebuilt: the MCP gateway is restarted on the new image."
+        docker stop claude-gateway >/dev/null
+    elif _claude_running claude-gateway \
+      && ! docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' claude-gateway \
+        | grep -qxF "GATEWAY_ROUTES=$(_claude_gateway_routes)"; then
+        echo "The MCP servers changed: the MCP gateway is restarted with the new routes."
         docker stop claude-gateway >/dev/null
     fi
     if _claude_running claude-gateway; then
@@ -348,7 +373,7 @@ claude_gateway(){
       --cap-drop ALL --security-opt no-new-privileges \
       --read-only --tmpfs /tmp:mode=1777 \
       -e PYTHONDONTWRITEBYTECODE=1 \
-      -e GATEWAY_ROUTES=devops=http://claude-mcp-devops:8000/mcp \
+      -e GATEWAY_ROUTES="$(_claude_gateway_routes)" \
       -e GATEWAY_IDLE_MINUTES="$BROKER_IDLE_MINUTES" -e GATEWAY_MAX_HOURS="$BROKER_MAX_HOURS" \
       -e GATEWAY_APPROVAL_SECONDS \
       "${notify_args[@]}" \
@@ -373,24 +398,44 @@ claude_gateway_stop(){
 }
 
 # MCP servers moved out of the agent container (see README, "MCP gateway"): command line, settings, the secret of
-# type 2 that the server gets from the secret broker, and the port it listens on. Printed as four lines.
+# type 2 that the server gets from the secret broker, the port it listens on, then the other arguments of docker run
+# (settings, mounts), one per line.
+#
+# mcp-atlassian runs one service per container (Jira or Confluence), so that each container holds one token. Over
+# HTTP, it refuses by default a request that brings no credentials of its own (ALLOW_GLOBAL_CRED_FALLBACK): here, only
+# the gateway reaches it, which forwards no credential header. Jira is read only (--read-only, and the gateway refuses
+# any other tool). Confluence reads the files of content_file, file_path and file_paths only under its working folder,
+# the drop folder of /shared, mounted read only at the same path as in the agent. mcp-atlassian gets its token through
+# --env-file (MCP_SECRET_FILE=1): the check of a path and the opening of the file are two steps, so a file of the drop
+# folder replaced by a symbolic link in between could make it read its own initial environment.
 _claude_mcp_spec(){
+    local atlassian="mcp-atlassian --transport streamable-http --host 0.0.0.0 --port 8000"
     case "$1" in
         devops)
-            echo "mcp-devops-onpremise --transport streamable-http --host 0.0.0.0 --port 8000"
-            echo "DEVOPS_API_URL=https://devops-server.admin.ch/DefaultCollection/BFS_SIS"
-            echo "DEVOPS_PAT"
-            echo "8000"
+            printf '%s\n' "mcp-devops-onpremise --transport streamable-http --host 0.0.0.0 --port 8000" \
+              DEVOPS_PAT 8000 \
+              -e DEVOPS_API_URL=https://devops-server.admin.ch/DefaultCollection/BFS_SIS
+            ;;
+        jira)
+            printf '%s\n' "$atlassian --read-only" JIRA_PERSONAL_TOKEN 8000 \
+              -e JIRA_URL=https://intranet.jira.bfs.admin.ch/jira \
+              -e TOOLSETS=all -e ALLOW_GLOBAL_CRED_FALLBACK=true -e MCP_SECRET_FILE=1
+            ;;
+        confluence)
+            printf '%s\n' "$atlassian" CONFLUENCE_PERSONAL_TOKEN 8000 \
+              -e CONFLUENCE_URL=https://intranet.confluence.bfs.admin.ch/confluence \
+              -e TOOLSETS=all -e ALLOW_GLOBAL_CRED_FALLBACK=true -e MCP_SECRET_FILE=1 \
+              -v "$AGENT_MCP_CONFLUENCE_DIR:/shared/mcp-confluence:ro" -w /shared/mcp-confluence
             ;;
         *)
-            echo "Unknown MCP server '$1' (servers: devops)." >&2
+            echo "Unknown MCP server '$1' (servers: $AGENT_MCP_SERVERS)." >&2
             return 1
             ;;
     esac
 }
 
 # Starts, stops, or restarts the container of an MCP server (see README, "MCP gateway"):
-#   claude_mcp start|stop|restart <server>   (servers: devops)
+#   claude_mcp start|stop|restart <server>   (servers: devops, jira, confluence)
 # The container starts without its token, on the network of the server, shared with the gateway only (connected to it
 # when it runs). Its token is then read from the secret broker (ctl export, through docker exec) and written
 # straight into the tmpfs of the container, through a pipe between two docker exec: no variable, no file on the host,
@@ -399,12 +444,12 @@ _claude_mcp_spec(){
 claude_mcp(){
     local action="${1:-}" name="${2:-}"
     if [[ ! "$action" =~ ^(start|stop|restart)$ ]] || [ -z "$name" ]; then
-        echo "Usage: claude_mcp start|stop|restart <server> (servers: devops)" >&2
+        echo "Usage: claude_mcp start|stop|restart <server> (servers: $AGENT_MCP_SERVERS)" >&2
         return 2
     fi
     local -a spec
     mapfile -t spec < <(_claude_mcp_spec "$name") || return
-    [ "${#spec[@]}" = 4 ] || return 1
+    [ "${#spec[@]}" -ge 3 ] || return 1
     local container="claude-mcp-$name"
     if [ "$action" != start ] || _claude_outdated "$container"; then
         if docker stop "$container" >/dev/null 2>&1; then
@@ -426,10 +471,22 @@ claude_mcp(){
     local network
     network="$(_claude_mcp_network "$name")" || return
     docker rm "$container" >/dev/null 2>&1
-    # The server waits for its token (at most a minute), reads it, removes the file, then replaces the shell.
+    # Created here, with the account of the user: a folder that docker run creates for a mount belongs to root.
+    if [ "$name" = confluence ]; then
+        mkdir -p "$AGENT_MCP_CONFLUENCE_DIR" || return
+    fi
+    # The server waits for its token (at most a minute), then replaces the shell. With MCP_SECRET_FILE=1, the token is
+    # handed through a file of settings (--env-file), loaded by the server and removed once it listens, so that it's
+    # never in the initial environment of the server (/proc/self/environ), which a tool reading files could reach.
+    # Otherwise it's exported to the server.
     local start_script='
         for i in $(seq 300); do [ -s /tmp/mcp-token ] && break; sleep 0.2; done
         [ -s /tmp/mcp-token ] || { echo "no token received" >&2; exit 1; }
+        if [ "${MCP_SECRET_FILE:-0}" = 1 ]; then
+            (umask 077; printf "%s=%s\n" "$MCP_SECRET_NAME" "$(cat /tmp/mcp-token)" > /tmp/mcp-env)
+            rm -f /tmp/mcp-token
+            exec $MCP_COMMAND --env-file /tmp/mcp-env
+        fi
         export "$MCP_SECRET_NAME=$(cat /tmp/mcp-token)"
         rm -f /tmp/mcp-token
         exec $MCP_COMMAND'
@@ -440,7 +497,7 @@ claude_mcp(){
       --cap-drop ALL --security-opt no-new-privileges \
       --read-only --tmpfs /tmp:mode=1777 \
       -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 \
-      -e "${spec[1]}" -e MCP_SECRET_NAME="${spec[2]}" -e MCP_COMMAND="${spec[0]}" \
+      -e MCP_SECRET_NAME="${spec[1]}" -e MCP_COMMAND="${spec[0]}" "${spec[@]:3}" \
       --entrypoint sh \
       bfs-claude-agent -c "$start_script" >/dev/null || return
     if _claude_running claude-gateway; then
@@ -450,14 +507,20 @@ claude_mcp(){
     # pipefail, so that a failed export isn't hidden by the second command of the pipe.
     if ! (
         set -o pipefail
-        _claude_broker_ctl export "${spec[2]}" \
+        _claude_broker_ctl export "${spec[1]}" \
           | docker exec -i "$container" sh -c 'umask 077; cat > /tmp/mcp-token.part && mv /tmp/mcp-token.part /tmp/mcp-token'
     ); then
-        echo "The token ${spec[2]} couldn't be handed to the MCP server $name: is it in the secrets file?" >&2
+        echo "The token ${spec[1]} couldn't be handed to the MCP server $name: is it in the secrets file?" >&2
         docker stop "$container" >/dev/null 2>&1; docker rm "$container" >/dev/null 2>&1
         return 1
     fi
-    _claude_mcp_wait "$container" "${spec[3]}" || return
+    _claude_mcp_wait "$container" "${spec[2]}" || return
+    # The server has loaded its file of settings before it listens: the token now only stays in its memory.
+    if ! docker exec "$container" rm -f /tmp/mcp-env; then
+        echo "The settings file of the MCP server $name couldn't be removed: the server is stopped." >&2
+        docker stop "$container" >/dev/null 2>&1; docker rm "$container" >/dev/null 2>&1
+        return 1
+    fi
     echo "MCP server $name started."
 }
 
@@ -484,7 +547,7 @@ except OSError:
 }
 
 # Commands of the secret broker and of the MCP gateway (see README, "Secret broker", "MCP gateway"):
-#   claude_secret allow <group>           opens a group: git, gh (broker); devops (gateway)
+#   claude_secret allow <group>           opens a group: git, gh (broker); devops, jira, confluence (gateway)
 #   claude_secret revoke <group>|all      closes a group, or every group of both
 #   claude_secret status                  state of the broker and of the gateway, and the waiting write calls
 #   claude_secret pending                 waiting write calls of the gateway
@@ -545,45 +608,74 @@ _claude_secret_on(){
     if [ "$service" = broker ]; then _claude_broker_ctl "$@"; else _claude_gateway_ctl "$@"; fi
 }
 
-# Creates or changes the secrets file in a disposable container without network: the file is decrypted to a
-# tmpfs, opened with nano, then encrypted again with a passphrase (asked twice) and written back to
-# AGENT_VAULT_DIR. The clear text never reaches the disk of the host. A running broker is then locked and
-# unlocked again, to load the new file. When an existing file is left unchanged, nothing is written nor reloaded
-# (exit code 10 of the container).
+# Creates or changes the secrets file in a disposable container without network: the file is decrypted to a tmpfs,
+# opened with nano, then encrypted again and written back to AGENT_VAULT_DIR. The clear text never reaches the disk
+# of the host. The passphrase is asked once, on the host (twice for a new file), and handed to age through pipes only
+# (age-passphrase): no file, no variable of a container. It serves the decryption, the encryption, and the reload of a
+# running broker. When an existing file is left unchanged, nothing is written nor reloaded.
 _claude_secret_edit(){
     mkdir -p "$AGENT_VAULT_DIR" && chmod 700 "$AGENT_VAULT_DIR" || return
-    local rc=0
-    docker run -it --rm --network none \
+    local passphrase confirmation
+    if [ -f "$AGENT_VAULT_DIR/secrets.age" ]; then
+        read -rsp "Passphrase of $AGENT_VAULT_DIR/secrets.age: " passphrase; echo
+    else
+        read -rsp "New passphrase of the secrets file: " passphrase; echo
+        read -rsp "Same passphrase again: " confirmation; echo
+        if [ "$passphrase" != "$confirmation" ]; then
+            echo "The two passphrases differ: nothing is written." >&2
+            return 1
+        fi
+    fi
+    if [ -z "$passphrase" ]; then
+        echo "Empty passphrase: nothing is written." >&2
+        return 1
+    fi
+    # The container only sleeps; each step runs in it with docker exec. It ends by itself after 30 minutes, so that the
+    # clear text of its tmpfs doesn't outlive an interrupted edit, and it's removed at the end of the edit.
+    local container="claude-secret-edit-$$" rc=0
+    docker run -d --rm --name "$container" --network none \
       --user $(id -u):$(id -g) \
       --cap-drop ALL --security-opt no-new-privileges \
       --read-only --tmpfs /work:mode=1777 --tmpfs /tmp:mode=1777 \
       -e HOME=/tmp \
       -v "$AGENT_VAULT_DIR:/vault" \
-      --entrypoint bash \
-      bfs-claude-agent -c '
-        set -euo pipefail
-        umask 077
-        if [ -f /vault/secrets.age ]; then
-            age --decrypt --output /work/secrets /vault/secrets.age
-            before="$(sha256sum < /work/secrets)"
-        else
-            cp /usr/local/share/claude-broker/secrets.example /work/secrets
-            before=""
-        fi
-        nano /work/secrets
-        if [ "$(sha256sum < /work/secrets)" = "$before" ]; then
-            echo "No change: the secrets file is left as it is."
-            exit 10
-        fi
-        age --passphrase --output /vault/secrets.age.new /work/secrets
-        mv /vault/secrets.age.new /vault/secrets.age
-        echo "Secrets file saved."' || rc=$?
-    [ "$rc" = 10 ] && return 0
-    [ "$rc" = 0 ] || return "$rc"
-    if _claude_broker_running; then
-        _claude_broker_ctl lock >/dev/null
-        claude_broker
+      --entrypoint sleep \
+      bfs-claude-agent 1800 >/dev/null || return
+    (
+        trap 'docker stop -t 0 "$container" >/dev/null 2>&1' EXIT
+        _claude_secret_edit_steps "$container" "$passphrase"
+    ) || rc=$?
+    if [ "$rc" = 10 ]; then
+        echo "No change: the secrets file is left as it is."
+        return 0
     fi
+    [ "$rc" = 0 ] || return "$rc"
+    echo "Secrets file saved."
+    if _claude_broker_running; then
+        printf '%s\n' "$passphrase" | docker exec -i claude-broker bash -c \
+          'set -o pipefail; age-passphrase --decrypt /vault/secrets.age | claude-broker ctl load'
+    fi
+}
+
+# Steps of claude_secret edit in its container: decryption, nano, encryption. Exit code 10 when the file is left
+# unchanged.
+_claude_secret_edit_steps(){
+    local container="$1" passphrase="$2" before=""
+    if docker exec "$container" test -f /vault/secrets.age; then
+        printf '%s\n' "$passphrase" | docker exec -i "$container" sh -c \
+          'umask 077; age-passphrase --decrypt --output /work/secrets /vault/secrets.age' || return
+        before="$(docker exec "$container" sha256sum /work/secrets)" || return
+    else
+        docker exec "$container" sh -c 'umask 077; cp /usr/local/share/claude-broker/secrets.example /work/secrets' \
+          || return
+    fi
+    docker exec -it "$container" nano /work/secrets || return
+    [ "$(docker exec "$container" sha256sum /work/secrets)" = "$before" ] && return 10
+    printf '%s\n' "$passphrase" | docker exec -i "$container" sh -c \
+      'set -e
+       umask 077
+       age-passphrase --passphrase --output /vault/secrets.age.new /work/secrets
+       mv /vault/secrets.age.new /vault/secrets.age' || return
 }
 
 # Stops the speech relay of the speech notifications, e.g. to apply a new setting (voice, speaker); the next
