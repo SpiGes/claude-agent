@@ -100,10 +100,11 @@ RUN apt-get update \
     && ln -s /usr/bin/fdfind /usr/local/bin/fd
 
 # Corporate proxy / internal CA certificates, trusted so HTTPS calls (apt, npm, dotnet, pip, ...)
-# work behind the corporate proxy.
-COPY certs/bit-proxy-ca.pem /usr/local/share/ca-certificates/bit-proxy-ca.crt
-COPY certs/nexus-ca.pem /usr/local/share/ca-certificates/nexus-ca.crt
-COPY certs/swissgov-root.cer /usr/local/share/ca-certificates/swissgov-root.crt
+# work behind the corporate proxy. Mode 0644 whatever the mode of the clone: the user of the container
+# mustn't be able to add a certificate to them.
+COPY --chmod=0644 certs/bit-proxy-ca.pem /usr/local/share/ca-certificates/bit-proxy-ca.crt
+COPY --chmod=0644 certs/nexus-ca.pem /usr/local/share/ca-certificates/nexus-ca.crt
+COPY --chmod=0644 certs/swissgov-root.cer /usr/local/share/ca-certificates/swissgov-root.crt
 RUN update-ca-certificates
 
 # GitHub CLI (`gh`), used by the agent for GitHub API actions (issues, pull requests), authenticated
