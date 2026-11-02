@@ -18,6 +18,7 @@ from claude_gateway import (
     DEVOPS_POLICY,
     JIRA_POLICY,
     POLICIES,
+    SAS_POLICY,
     Approvals,
     Gateway,
     GatewayHTTPServer,
@@ -180,6 +181,12 @@ class PolicyTest(unittest.TestCase):
             with self.subTest(tool=tool):
                 self.assertEqual(CONFLUENCE_POLICY.classify(tool), "denied")
 
+    def test_classify_sas(self) -> None:
+        self.assertEqual(SAS_POLICY.classify("sas_get"), "read")
+        for tool in ("sas_exec", "sas_put", "sas_run", "sas_new_tool_of_a_later_version"):
+            with self.subTest(tool=tool):
+                self.assertEqual(SAS_POLICY.classify(tool), "write")
+
     def test_policies_follow_the_rules_of_the_dev_profile(self) -> None:
         """A tool denied by settings.json is refused by the gateway, a tool that asks for confirmation is a write."""
         settings = json.loads((Path(__file__).parents[1] / "profiles/dev/settings.json").read_text(encoding="utf-8"))
@@ -321,6 +328,28 @@ class ApprovalsTest(GatewayTestCase):
         approvals_timeout = Approvals(0.05, self.clock, self.notifications.append)
         self.assertFalse(approvals_timeout.request(write_call("devops_pull_request_create_comment"))[0])
 
+    def test_approval_for_the_tool_is_limited_to_the_agent(self) -> None:
+        approvals = Approvals(5, self.clock, self.notifications.append)
+
+        def decide(*args: str, approve: bool) -> threading.Thread:
+            def run() -> None:
+                while not approvals.pending_lines():
+                    threading.Event().wait(0.01)
+                approvals.decide(list(args), approve=approve)
+
+            thread = threading.Thread(target=run, daemon=True)
+            thread.start()
+            return thread
+
+        thread = decide("--tool", "5m", approve=True)
+        self.assertEqual(approvals.request(write_call("devops_work_item_update")), (True, "approved"))
+        thread.join()
+        other_agent = ToolCall("devops", "DevOps", "devops_work_item_update", "", "{}", "agent dev 1")
+        thread = decide(approve=False)
+        self.assertEqual(approvals.request(other_agent), (False, "denied"))
+        thread.join()
+        self.assertEqual(approvals.request(write_call("devops_work_item_update")), (True, "approved for the tool"))
+
     def test_decision_errors(self) -> None:
         with self.assertRaisesRegex(ValueError, "no call is waiting"):
             self.gateway.approvals.decide([], approve=True)
@@ -455,7 +484,13 @@ class AdminCommandTest(GatewayTestCase):
         ok, message = run_admin_command(self.gateway, {"command": "approve", "args": ["--tool", "5m"]})
         self.assertEqual(
             (ok, message),
-            (True, "Call 1 approved: devops_work_item_update, and the next calls of devops_work_item_update for 5 min"),
+            (
+                True,
+                (
+                    "Call 1 approved: devops_work_item_update, and the next calls of devops_work_item_update by the "
+                    "same agent for 5 min"
+                ),
+            ),
         )
         thread.join()
         self.assertEqual(result, [None])

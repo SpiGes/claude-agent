@@ -231,25 +231,27 @@ RUN chmod +x /usr/local/bin/agent-memory-sync /usr/local/bin/agent-memory-guard
 # Secret broker and MCP gateway (see broker/ and README, "Secret broker", "MCP gateway"): the services of the
 # claude-broker and claude-gateway containers, and the clients of the agent container, a Git credential helper and a
 # wrapper of gh placed before /usr/bin/gh in the PATH. The MCP servers written for the agent (mcp_server.py, e.g.
-# claude-mcp-keycloak) run in containers of their own, behind the gateway; mcp-call calls one of their tools from a
-# script. Without BROKER_URL (e.g. in a build container), both clients leave Git and gh as they are. age-passphrase
-# runs age with a passphrase read from stdin, for claude_secret edit. The Python modules stay together in
+# claude-mcp-keycloak, claude-mcp-sas) run in containers of their own, behind the gateway; mcp-call calls one of
+# their tools from a script. Without BROKER_URL (e.g. in a build container), both clients leave Git and gh as they
+# are. age-passphrase runs age with a passphrase read from stdin, for claude_secret edit. The Python modules stay together in
 # /opt/claude-agent/broker, so that each command finds the shared module (access.py) next to it; the commands are
 # links to them.
 COPY broker/access.py broker/age_passphrase.py broker/claude_broker.py broker/claude_gateway.py \
-    broker/git_credential_broker.py broker/mcp_server.py broker/claude_mcp_keycloak.py broker/mcp_call.py \
-    /opt/claude-agent/broker/
+    broker/git_credential_broker.py broker/mcp_server.py broker/claude_mcp_keycloak.py broker/claude_mcp_sas.py \
+    broker/mcp_call.py /opt/claude-agent/broker/
 COPY broker/gh /usr/local/bin/gh
 COPY broker/secrets.example /usr/local/share/claude-broker/secrets.example
 RUN chmod 0755 /opt/claude-agent/broker/claude_broker.py /opt/claude-agent/broker/claude_gateway.py \
         /opt/claude-agent/broker/git_credential_broker.py /opt/claude-agent/broker/age_passphrase.py /usr/local/bin/gh \
-    && chmod 0755 /opt/claude-agent/broker/claude_mcp_keycloak.py /opt/claude-agent/broker/mcp_call.py \
+    && chmod 0755 /opt/claude-agent/broker/claude_mcp_keycloak.py /opt/claude-agent/broker/claude_mcp_sas.py \
+        /opt/claude-agent/broker/mcp_call.py \
     && chmod 0644 /opt/claude-agent/broker/access.py /opt/claude-agent/broker/mcp_server.py \
     && ln -s /opt/claude-agent/broker/claude_broker.py /usr/local/bin/claude-broker \
     && ln -s /opt/claude-agent/broker/claude_gateway.py /usr/local/bin/claude-gateway \
     && ln -s /opt/claude-agent/broker/git_credential_broker.py /usr/local/bin/git-credential-broker \
     && ln -s /opt/claude-agent/broker/age_passphrase.py /usr/local/bin/age-passphrase \
     && ln -s /opt/claude-agent/broker/claude_mcp_keycloak.py /usr/local/bin/claude-mcp-keycloak \
+    && ln -s /opt/claude-agent/broker/claude_mcp_sas.py /usr/local/bin/claude-mcp-sas \
     && ln -s /opt/claude-agent/broker/mcp_call.py /usr/local/bin/mcp-call
 
 # Container entrypoint script.

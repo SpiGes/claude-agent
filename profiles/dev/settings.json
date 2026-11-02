@@ -35,7 +35,10 @@
       "mcp__devops__devops_work_item_update",
       "mcp__devops__devops_work_item_create",
       "mcp__devops__devops_work_item_comment_add",
-      "mcp__devops__devops_work_item_comment_update"
+      "mcp__devops__devops_work_item_comment_update",
+      "mcp__sas__sas_exec",
+      "mcp__sas__sas_put",
+      "mcp__sas__sas_run"
     ],
     "deny": [
       "Read(./.env)",
