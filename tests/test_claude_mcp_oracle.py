@@ -438,6 +438,12 @@ class ProcessingAreasTest(unittest.TestCase):
 
 class DatabaseErrorsTest(unittest.TestCase):
     def test_other_errors_go_through(self) -> None:
+        unreachable = OSError(-2, "Name or service not known")
+        with (
+            self.assertRaisesRegex(ToolError, "^the database can't be reached: OSError: .*Name or service"),
+            database_errors(),
+        ):
+            raise unreachable
         bug, kept = ValueError("bug"), ToolError("kept")
         with self.assertRaises(ValueError), database_errors():
             raise bug

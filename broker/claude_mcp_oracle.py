@@ -397,11 +397,18 @@ class Database:
 
 @contextmanager
 def database_errors() -> Generator[None]:
-    """Turn an error of oracledb (e.g. ORA-00942) into a tool error with its message, which holds no password."""
+    """Turn an error of oracledb (e.g. ORA-00942) or of the network into a tool error with its message.
+
+    Neither holds a password: oracledb never puts it in a message, and a network error only names the failure (e.g.
+    "Name or service not known").
+    """
     try:
         yield
     except ToolError:
         raise
+    except OSError as error:
+        message = f"the database can't be reached: {type(error).__name__}: {error}"
+        raise ToolError(message) from error
     except Exception as error:
         if not type(error).__module__.startswith("oracledb"):
             raise
