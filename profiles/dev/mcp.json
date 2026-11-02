@@ -13,7 +13,7 @@
     "sas": {
       "type": "http",
       "url": "http://claude-gateway:8090/mcp/sas",
-      "timeout": 900000
+      "timeout": 1020000
     }
   }
 }
