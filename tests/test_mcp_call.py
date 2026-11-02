@@ -66,7 +66,7 @@ class EndToEndTest(unittest.TestCase):
     def test_main(self) -> None:
         self.gateway.allow("keycloak")
         with (
-            mock.patch.dict("os.environ", {"MCP_GATEWAY_URL": self.url}),
+            mock.patch.dict("os.environ", {"MCP_GATEWAY_URL": self.url, "MCP_CALL_TIMEOUT_SECONDS": "900"}),
             mock.patch("sys.stdout", io.StringIO()) as stdout,
             mock.patch("sys.stderr", io.StringIO()) as stderr,
         ):
@@ -90,6 +90,18 @@ class ArgumentsTest(unittest.TestCase):
             with self.subTest(argv=argv), mock.patch("sys.stderr", io.StringIO()) as stderr:
                 self.assertEqual(main(argv), 2)
                 self.assertIn(message, stderr.getvalue())
+
+
+class TimeoutTest(unittest.TestCase):
+    def test_invalid_timeout(self) -> None:
+        for value in ("0", "3601", "ten", "-5"):
+            with (
+                self.subTest(value=value),
+                mock.patch.dict("os.environ", {"MCP_CALL_TIMEOUT_SECONDS": value}),
+                mock.patch("sys.stderr", io.StringIO()) as stderr,
+            ):
+                self.assertEqual(main(["keycloak", "keycloak_token"]), 2)
+                self.assertIn("MCP_CALL_TIMEOUT_SECONDS must be between 1 and 3600", stderr.getvalue())
 
 
 class ParseAnswerTest(unittest.TestCase):

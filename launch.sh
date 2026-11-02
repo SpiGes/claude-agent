@@ -32,7 +32,7 @@ export AGENT_GATEWAY_LOG_DIR="${AGENT_GATEWAY_LOG_DIR:-$AGENT_HOMES_DIR/gateway}
 export GATEWAY_APPROVAL_SECONDS="${GATEWAY_APPROVAL_SECONDS:-120}"
 # MCP servers started by claude_mcp, and the drop folder of the Confluence server (the files it reads: page bodies and
 # attachments), under /shared so that the agent writes there and the person opens them before an approval.
-export AGENT_MCP_SERVERS="devops jira confluence keycloak sas"
+export AGENT_MCP_SERVERS="devops jira confluence keycloak sas oracle"
 # Profiles of the SpiGes Keycloak clients (<profile>=<client id>, no secret), read by the Keycloak MCP server. The
 # file is the list of the clients the agent may get a token for: it's kept out of the folders mounted in the agent
 # container (not under /shared), so that only the person changes it.
@@ -351,9 +351,9 @@ _claude_gateway_routes(){
 # Starts the MCP gateway (see README, "MCP gateway") unless it's running: on the network of the agents, which reach
 # it at http://claude-gateway:8090/mcp/<name>, and on the network of each MCP server created so far (claude_mcp
 # connects it to the networks created later). It holds no secret: its groups (devops, jira, confluence, keycloak,
-# sas) and the waiting write calls are lost when it restarts, every group is then closed. A gateway started from an older image,
-# or with other routes (e.g. a server added to launch.sh), is restarted. It doesn't start the MCP containers
-# (claude_mcp), nor is it started by claude_dev.
+# sas, oracle) and the waiting write calls are lost when it restarts, every group is then closed. A gateway started
+# from an older image, or with other routes (e.g. a server added to launch.sh), is restarted. It doesn't start the MCP
+# containers (claude_mcp), nor is it started by claude_dev.
 claude_gateway(){
     _claude_network || return
     if _claude_outdated claude-gateway; then
@@ -440,6 +440,14 @@ _claude_mcp_spec(){
               -e MCP_SECRET_FILE=1 -e KEYCLOAK_CLIENTS_FILE=/config/keycloak-clients.txt \
               -v "$AGENT_KEYCLOAK_CLIENTS_FILE:/config/keycloak-clients.txt:ro"
             ;;
+        oracle)
+            # Server of the agent (broker/claude_mcp_oracle.py): SQL on the REF and TST Oracle databases, and the
+            # processing areas (Mediator, DAL), with the secret of the technical SIS client.
+            local secrets="SPIGES_ORACLE_REF_USER SPIGES_ORACLE_REF_PASSWORD SPIGES_ORACLE_REF_DATASOURCE"
+            secrets+=" SPIGES_ORACLE_TST_USER SPIGES_ORACLE_TST_PASSWORD SPIGES_ORACLE_TST_DATASOURCE"
+            secrets+=" SPIGES_KEYCLOAK_SPIGES_CLIENT_SECRET"
+            printf '%s\n' "claude-mcp-oracle serve --port 8000" "$secrets" 8000 -e MCP_SECRET_FILE=1
+            ;;
         sas)
             # Server of the agent (broker/claude_mcp_sas.py): ssh and scp to the SAS server of REF. The known hosts
             # file is mounted read only; the drop folder at the same path as in the agent.
@@ -462,7 +470,7 @@ _claude_mcp_spec(){
 }
 
 # Starts, stops, or restarts the container of an MCP server (see README, "MCP gateway"):
-#   claude_mcp start|stop|restart <server>   (servers: devops, jira, confluence, keycloak, sas)
+#   claude_mcp start|stop|restart <server>   (servers: devops, jira, confluence, keycloak, sas, oracle)
 # The container starts without its secrets, on the network of the server, shared with the gateway only (connected to
 # it when it runs). Its secrets are then read from the secret broker (ctl export, through docker exec) and written
 # straight into the tmpfs of the container, through a pipe between two docker exec: no variable, no file on the host,
@@ -586,8 +594,8 @@ except OSError:
 }
 
 # Commands of the secret broker and of the MCP gateway (see README, "Secret broker", "MCP gateway"):
-#   claude_secret allow <group>           opens a group: git, gh (broker); devops, jira, confluence, keycloak, sas
-#                                         (gateway)
+#   claude_secret allow <group>           opens a group: git, gh (broker); devops, jira, confluence, keycloak, sas,
+#                                         oracle (gateway)
 #   claude_secret revoke <group>|all      closes a group, or every group of both
 #   claude_secret status                  state of the broker and of the gateway, and the waiting write calls
 #   claude_secret pending                 waiting write calls of the gateway

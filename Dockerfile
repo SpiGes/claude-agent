@@ -55,6 +55,8 @@ RUN apt-get update \
         openssh-client \
         # Required by Puppeteer (used by mermaid-cli) to extract the downloaded Chromium archive.
         unzip \
+        # Asynchronous I/O library, required by Oracle Instant Client (Oracle MCP server, see below).
+        libaio1t64 \
         # Audio recorder used by the voice dictation of Claude Code (`/voice`), with its PulseAudio
         # backend: the microphone is reached through the WSLg audio server, when launch.sh mounts it
         # (AGENT_VOICE_INPUT=1).
@@ -100,10 +102,11 @@ RUN apt-get update \
     && ln -s /usr/bin/fdfind /usr/local/bin/fd
 
 # Corporate proxy / internal CA certificates, trusted so HTTPS calls (apt, npm, dotnet, pip, ...)
-# work behind the corporate proxy.
-COPY certs/bit-proxy-ca.pem /usr/local/share/ca-certificates/bit-proxy-ca.crt
-COPY certs/nexus-ca.pem /usr/local/share/ca-certificates/nexus-ca.crt
-COPY certs/swissgov-root.cer /usr/local/share/ca-certificates/swissgov-root.crt
+# work behind the corporate proxy. Mode 0644 whatever the mode of the clone: the user of the container
+# mustn't be able to add a certificate to them.
+COPY --chmod=0644 certs/bit-proxy-ca.pem /usr/local/share/ca-certificates/bit-proxy-ca.crt
+COPY --chmod=0644 certs/nexus-ca.pem /usr/local/share/ca-certificates/nexus-ca.crt
+COPY --chmod=0644 certs/swissgov-root.cer /usr/local/share/ca-certificates/swissgov-root.crt
 RUN update-ca-certificates
 
 # GitHub CLI (`gh`), used by the agent for GitHub API actions (issues, pull requests), authenticated
@@ -187,6 +190,29 @@ RUN pipx install mcp-devops-onpremise==2.1.0
 RUN pipx install yq==4.2.0
 # Pattern-based static analysis (C#, TypeScript, YAML), used by the code-review/security-review skills.
 RUN pipx install semgrep==1.177.0
+# Oracle Instant Client (Basic Light), for the Oracle MCP server (claude-mcp-oracle, see README, "MCP gateway"):
+# oracledb runs in thick mode, since the SpiGes databases require the native network encryption of Oracle, which the
+# thin mode doesn't support. Official download of Oracle, pinned by its SHA-256 (published on the download page);
+# free to use and to redistribute under the Oracle Free Use Terms and Conditions.
+# Instant Client looks for libaio.so.1, named libaio.so.1t64 since Ubuntu 24.04. Its folder is registered with ldconfig,
+# as Oracle recommends on Linux, so that its libraries find each other (e.g. libnnz.so).
+ARG ORACLE_INSTANT_CLIENT_URL=https://download.oracle.com/otn_software/linux/instantclient/2326400/instantclient-basiclite-linux.x64-23.26.4.0.0.zip
+ARG ORACLE_INSTANT_CLIENT_SHA256=d049e593bba0041feb15c14ea894e2f1a437377462b99d9bdb6b7ab30b2dd660
+RUN curl -fsSL -o /tmp/instantclient.zip "$ORACLE_INSTANT_CLIENT_URL" \
+    && echo "$ORACLE_INSTANT_CLIENT_SHA256  /tmp/instantclient.zip" | sha256sum -c - \
+    && mkdir -p /opt/oracle \
+    && unzip -q /tmp/instantclient.zip -d /opt/oracle \
+    && mv /opt/oracle/instantclient_* /opt/oracle/instantclient \
+    && rm /tmp/instantclient.zip \
+    && ln -s /usr/lib/x86_64-linux-gnu/libaio.so.1t64 /usr/lib/x86_64-linux-gnu/libaio.so.1 \
+    && echo /opt/oracle/instantclient > /etc/ld.so.conf.d/oracle-instantclient.conf \
+    && ldconfig
+# Virtual environment of the Oracle MCP server: oracledb (thick mode, with the Instant Client above) and its
+# dependencies, pinned with their hashes.
+COPY broker/oracle-requirements.txt /opt/claude-mcp-oracle/requirements.txt
+RUN python3 -m venv /opt/claude-mcp-oracle \
+    && /opt/claude-mcp-oracle/bin/pip install --no-cache-dir --require-hashes --only-binary=:all: \
+        -r /opt/claude-mcp-oracle/requirements.txt
 
 # Bring in Node.js and npm from the official Node image instead of an apt-installed version.
 COPY --from=node-source /usr/local/bin/node /usr/local/bin/node
@@ -231,20 +257,20 @@ RUN chmod +x /usr/local/bin/agent-memory-sync /usr/local/bin/agent-memory-guard
 # Secret broker and MCP gateway (see broker/ and README, "Secret broker", "MCP gateway"): the services of the
 # claude-broker and claude-gateway containers, and the clients of the agent container, a Git credential helper and a
 # wrapper of gh placed before /usr/bin/gh in the PATH. The MCP servers written for the agent (mcp_server.py, e.g.
-# claude-mcp-keycloak, claude-mcp-sas) run in containers of their own, behind the gateway; mcp-call calls one of
-# their tools from a script. Without BROKER_URL (e.g. in a build container), both clients leave Git and gh as they
-# are. age-passphrase runs age with a passphrase read from stdin, for claude_secret edit. The Python modules stay together in
-# /opt/claude-agent/broker, so that each command finds the shared module (access.py) next to it; the commands are
-# links to them.
+# claude-mcp-keycloak, claude-mcp-sas, claude-mcp-oracle) run in containers of their own, behind the gateway;
+# mcp-call calls one of their tools from a script. Without BROKER_URL (e.g. in a build container), both clients leave
+# Git and gh as they are. age-passphrase runs age with a passphrase read from stdin, for claude_secret edit. The
+# Python modules stay together in /opt/claude-agent/broker, so that each command finds the shared modules (access.py,
+# mcp_server.py) next to it; the commands are links to them.
 COPY broker/access.py broker/age_passphrase.py broker/claude_broker.py broker/claude_gateway.py \
     broker/git_credential_broker.py broker/mcp_server.py broker/claude_mcp_keycloak.py broker/claude_mcp_sas.py \
-    broker/mcp_call.py /opt/claude-agent/broker/
+    broker/claude_mcp_oracle.py broker/mcp_call.py /opt/claude-agent/broker/
 COPY broker/gh /usr/local/bin/gh
 COPY broker/secrets.example /usr/local/share/claude-broker/secrets.example
 RUN chmod 0755 /opt/claude-agent/broker/claude_broker.py /opt/claude-agent/broker/claude_gateway.py \
         /opt/claude-agent/broker/git_credential_broker.py /opt/claude-agent/broker/age_passphrase.py /usr/local/bin/gh \
     && chmod 0755 /opt/claude-agent/broker/claude_mcp_keycloak.py /opt/claude-agent/broker/claude_mcp_sas.py \
-        /opt/claude-agent/broker/mcp_call.py \
+        /opt/claude-agent/broker/claude_mcp_oracle.py /opt/claude-agent/broker/mcp_call.py \
     && chmod 0644 /opt/claude-agent/broker/access.py /opt/claude-agent/broker/mcp_server.py \
     && ln -s /opt/claude-agent/broker/claude_broker.py /usr/local/bin/claude-broker \
     && ln -s /opt/claude-agent/broker/claude_gateway.py /usr/local/bin/claude-gateway \
@@ -252,6 +278,7 @@ RUN chmod 0755 /opt/claude-agent/broker/claude_broker.py /opt/claude-agent/broke
     && ln -s /opt/claude-agent/broker/age_passphrase.py /usr/local/bin/age-passphrase \
     && ln -s /opt/claude-agent/broker/claude_mcp_keycloak.py /usr/local/bin/claude-mcp-keycloak \
     && ln -s /opt/claude-agent/broker/claude_mcp_sas.py /usr/local/bin/claude-mcp-sas \
+    && ln -s /opt/claude-agent/broker/claude_mcp_oracle.py /usr/local/bin/claude-mcp-oracle \
     && ln -s /opt/claude-agent/broker/mcp_call.py /usr/local/bin/mcp-call
 
 # Container entrypoint script.

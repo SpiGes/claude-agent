@@ -12,7 +12,8 @@ Installed in the image as /usr/local/bin/mcp-call. Usage:
     mcp-call <server> <tool> [<arguments as a JSON object>]
     e.g. mcp-call keycloak keycloak_token '{"profile": "bfs"}'
 
-MCP_GATEWAY_URL gives the gateway (default http://claude-gateway:8090).
+MCP_GATEWAY_URL gives the gateway (default http://claude-gateway:8090). MCP_CALL_TIMEOUT_SECONDS gives the time to wait
+for the answer (default 180, at most 3600), e.g. for a tool that runs for several minutes after its approval.
 """
 
 import contextlib
@@ -21,13 +22,14 @@ import json
 import os
 import re
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Final, cast
 from urllib.parse import urlsplit
 
 DEFAULT_GATEWAY: Final = "http://claude-gateway:8090"
 # Longer than the time given to approve a write call on the host (GATEWAY_APPROVAL_SECONDS, default 120).
 TIMEOUT_SECONDS: Final = 180
+MAX_TIMEOUT_SECONDS: Final = 3600
 NAME_PATTERN: Final = re.compile(r"[a-z0-9_-]{1,64}")
 EXIT_TOOL_ERROR: Final = 1
 EXIT_FAILURE: Final = 2
@@ -35,6 +37,10 @@ EXIT_FAILURE: Final = 2
 
 class CallError(Exception):
     """A failure of the gateway or of the MCP server (not a tool error)."""
+
+
+class UsageError(Exception):
+    """Invalid arguments or settings of mcp-call."""
 
 
 def parse_answer(body: bytes, content_type: str, request_id: int) -> dict[str, object]:
@@ -59,13 +65,13 @@ def parse_answer(body: bytes, content_type: str, request_id: int) -> dict[str, o
 class Session:
     """An MCP session with one server, through the gateway."""
 
-    def __init__(self, gateway: str, server: str) -> None:
+    def __init__(self, gateway: str, server: str, timeout: float = TIMEOUT_SECONDS) -> None:
         """Prepare the connection to the route of the server."""
         url = urlsplit(gateway)
         if url.scheme != "http" or not url.hostname:
             message = f"invalid MCP_GATEWAY_URL: {gateway}"
             raise CallError(message)
-        self._connection = http.client.HTTPConnection(url.hostname, url.port or 80, timeout=TIMEOUT_SECONDS)
+        self._connection = http.client.HTTPConnection(url.hostname, url.port or 80, timeout=timeout)
         self._path = f"{url.path.rstrip('/')}/mcp/{server}"
         self._session_id: str | None = None
         self._next_id = 1
@@ -114,9 +120,11 @@ class Session:
         return response.status, response.getheader("Content-Type") or "", data
 
 
-def call(gateway: str, server: str, tool: str, arguments: dict[str, object]) -> tuple[bool, str]:
+def call(
+    gateway: str, server: str, tool: str, arguments: dict[str, object], timeout: float = TIMEOUT_SECONDS
+) -> tuple[bool, str]:
     """Call one tool; return whether it's a tool error, and the text of its result."""
-    session = Session(gateway, server)
+    session = Session(gateway, server, timeout)
     try:
         session.request(
             "initialize",
@@ -138,24 +146,35 @@ def call(gateway: str, server: str, tool: str, arguments: dict[str, object]) -> 
     return result.get("isError") is True, "\n".join(texts)
 
 
-def main(argv: Sequence[str]) -> int:
-    """Run one call and print its result."""
-    usage = "usage: mcp-call <server> <tool> [<arguments as a JSON object>]"
+def parse_arguments(argv: Sequence[str], environ: Mapping[str, str]) -> tuple[str, str, dict[str, object], int]:
+    """Return the server, the tool, the arguments of the call, and the time to wait; raise UsageError otherwise."""
     if len(argv) not in {2, 3} or not all(NAME_PATTERN.fullmatch(name) for name in argv[:2]):
-        print(usage, file=sys.stderr)
-        return EXIT_FAILURE
+        message = "usage: mcp-call <server> <tool> [<arguments as a JSON object>]"
+        raise UsageError(message)
     try:
         arguments: object = json.loads(argv[2]) if len(argv) == 3 else {}  # noqa: PLR2004  # optional arguments
     except json.JSONDecodeError as error:
-        print(f"mcp-call: the arguments aren't JSON ({error})", file=sys.stderr)
-        return EXIT_FAILURE
+        message = f"mcp-call: the arguments aren't JSON ({error})"
+        raise UsageError(message) from error
     if not isinstance(arguments, dict):
-        print("mcp-call: the arguments must be a JSON object", file=sys.stderr)
+        message = "mcp-call: the arguments must be a JSON object"
+        raise UsageError(message)
+    timeout = environ.get("MCP_CALL_TIMEOUT_SECONDS", str(TIMEOUT_SECONDS))
+    if not timeout.isdigit() or not 1 <= int(timeout) <= MAX_TIMEOUT_SECONDS:
+        message = f"mcp-call: MCP_CALL_TIMEOUT_SECONDS must be between 1 and {MAX_TIMEOUT_SECONDS}"
+        raise UsageError(message)
+    return argv[0], argv[1], cast("dict[str, object]", arguments), int(timeout)
+
+
+def main(argv: Sequence[str]) -> int:
+    """Run one call and print its result."""
+    try:
+        server, tool, arguments, timeout = parse_arguments(argv, os.environ)
+    except UsageError as error:
+        print(error, file=sys.stderr)
         return EXIT_FAILURE
     try:
-        is_error, text = call(
-            os.environ.get("MCP_GATEWAY_URL", DEFAULT_GATEWAY), argv[0], argv[1], cast("dict[str, object]", arguments)
-        )
+        is_error, text = call(os.environ.get("MCP_GATEWAY_URL", DEFAULT_GATEWAY), server, tool, arguments, timeout)
     except CallError as error:
         print(f"mcp-call: {error}", file=sys.stderr)
         return EXIT_FAILURE

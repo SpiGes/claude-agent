@@ -260,6 +260,11 @@ class SummarizeTest(unittest.TestCase):
             summarize({"pull_request_id": 44283, "content": "long text", "nested": {"a": 1}, "status": "fixed"}),
             "pull_request_id=44283, status=fixed",
         )
+        # The SQL of the Oracle server may hold values (e.g. test data): never in the log.
+        self.assertEqual(
+            summarize({"environment": "ref", "sql": "INSERT INTO t VALUES ('a name')", "expect_rows": 1}),
+            "environment=ref, expect_rows=1",
+        )
         self.assertEqual(summarize("not arguments"), "")
         self.assertTrue(summarize({"title": "x" * 200}).endswith("…"))
         self.assertLessEqual(len(summarize({f"k{n}": "v" * 50 for n in range(10)})), 160)
@@ -578,7 +583,6 @@ class HttpTest(GatewayTestCase):
             ("GET", "/mcp/jira", None, {}, 404),
             ("POST", "/mcp/devops", "x", {"Content-Length": "abc"}, 400),
             ("POST", "/mcp/devops", "not json", {}, 400),
-            ("POST", "/mcp/devops", "x" * (claude_gateway.MAX_REQUEST_BYTES + 1), {}, 413),
         ):
             with self.subTest(method=method, path=path, status=status):
                 connection.request(method, path, body=body, headers=headers)
@@ -586,6 +590,20 @@ class HttpTest(GatewayTestCase):
                 response.read()
                 self.assertEqual(response.status, status)
                 connection.close()
+
+    def test_request_too_large(self) -> None:
+        """A request is refused on its Content-Length, before its body is read.
+
+        The body isn't sent: the gateway answers and closes the connection after the headers, so that a client still
+        sending a large body would get a broken pipe, depending on timing.
+        """
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        self.addCleanup(connection.close)
+        connection.putrequest("POST", "/mcp/devops")
+        connection.putheader("Content-Length", str(claude_gateway.MAX_REQUEST_BYTES + 1))
+        connection.endheaders()
+        response = connection.getresponse()
+        self.assertEqual((response.status, response.read()), (413, b"request too large"))
 
     def test_error_before_the_body_closes_the_connection(self) -> None:
         """The next request on a kept-alive connection isn't read from the unread body of a refused one."""
