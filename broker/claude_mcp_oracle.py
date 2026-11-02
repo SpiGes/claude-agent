@@ -37,6 +37,7 @@ import json
 import logging
 import re
 import sys
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -284,6 +285,8 @@ class Account:
 
 
 INSTANT_CLIENT_DIR: Final = "/opt/oracle/instantclient"
+# The thick mode is initialized once per process, by the first connection (one thread per request).
+CLIENT_INITIALIZATION: Final = threading.Lock()
 
 
 def connect_oracle(user: str, password: str, data_source: str) -> Connection:  # pragma: no cover - needs a database
@@ -293,11 +296,12 @@ def connect_oracle(user: str, password: str, data_source: str) -> Connection:  #
     """
     import oracledb  # noqa: PLC0415  # only in the virtual environment of the server
 
-    if oracledb.is_thin_mode():
-        oracledb.init_oracle_client(lib_dir=INSTANT_CLIENT_DIR)
-    # NUMBER as Decimal (exact, as the client prints it), LOBs as str and bytes.
-    oracledb.defaults.fetch_decimals = True
-    oracledb.defaults.fetch_lobs = False
+    with CLIENT_INITIALIZATION:
+        if oracledb.is_thin_mode():
+            oracledb.init_oracle_client(lib_dir=INSTANT_CLIENT_DIR)
+            # NUMBER as Decimal (exact, as the client prints it), LOBs as str and bytes.
+            oracledb.defaults.fetch_decimals = True
+            oracledb.defaults.fetch_lobs = False
     return cast("Connection", oracledb.connect(user=user, password=password, dsn=data_source))
 
 
@@ -325,6 +329,18 @@ class Statement:
     sql: str
     schema: str | None
     timeout_seconds: int
+
+
+def _rollback(connection: Connection) -> None:
+    """Roll back, without hiding an error of the statement.
+
+    After a broken connection (e.g. its time limit), the rollback fails too, and its error would replace the first
+    one. Nothing is committed when the connection closes.
+    """
+    try:
+        connection.rollback()
+    except Exception as error:  # noqa: BLE001  # logged, the error of the statement (if any) goes on
+        LOGGER.warning("rollback failed: %s: %s", type(error).__name__, error)
 
 
 class Database:
@@ -364,7 +380,7 @@ class Database:
             try:
                 yield connection
             finally:
-                connection.rollback()
+                _rollback(connection)
         finally:
             connection.close()
 

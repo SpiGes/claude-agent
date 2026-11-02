@@ -281,6 +281,22 @@ class QueryTest(DatabaseTestCase):
         self.assertEqual(self.connection.events, ["rollback", "close"])
 
 
+class RollbackTest(DatabaseTestCase):
+    def test_failed_rollback_keeps_the_first_error(self) -> None:
+        self.connection.error = OracleError("DPY-4024: call timeout of 5000 ms exceeded")
+        self.connection.failing = "SELECT * FROM big"
+        failed_rollback = OracleError("DPI-1010: not connected")
+
+        def rollback() -> None:
+            raise failed_rollback
+
+        self.connection.rollback = rollback  # type: ignore[method-assign]
+        with self.assertRaisesRegex(ToolError, "DPY-4024"), self.assertLogs("mcp-server", "WARNING") as logs:
+            self.oracle.query({"environment": "ref", "sql": "SELECT * FROM big"})
+        self.assertIn("rollback failed: OracleError: DPI-1010", logs.output[0])
+        self.assertEqual(self.connection.events, ["close"])
+
+
 class WriteTest(DatabaseTestCase):
     def test_committed(self) -> None:
         self.connection.rowcount = 1
