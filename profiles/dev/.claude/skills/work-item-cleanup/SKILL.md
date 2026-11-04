@@ -74,7 +74,7 @@ The ownership of a branch or worktree is decided by exact rules, never by a subs
   (`sourceRefName` of `devops_pull_request_get`, `headRefName` of `gh pr view --json headRefName`)
   belongs to the work item. This rule comes first, since it doesn't depend on a naming convention.
 - **Branch name (Azure DevOps).** A local branch belongs to the work item when its full name matches
-  `^(feature|issue|bug)/RC_<id>_` (e.g. `issue/RC_158497_ks_upload_enterprise_only`). This covers the
+  `^(feature|issue|bug|bugfix)/RC_<id>_` (e.g. `issue/RC_158497_ks_upload_enterprise_only`). This covers the
   branches without a pull request, like the specs branch.
 - **Branch name (GitHub).** A local branch belongs to the issue when its full name matches
   `^feature/<n>-` (e.g. `feature/18-work-item-cleanup-skill` for issue 18, but not
