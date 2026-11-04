@@ -42,11 +42,12 @@ Unless another structure is explicitly requested, a design document is organized
 6. one chapter per design point to resolve
 7. Changes to the existing system
 8. Security
-9. Configuration
-10. Deferred design points
-11. Open points
-12. Static diagrams
-13. Dynamic diagrams
+9. API
+10. Configuration
+11. Deferred design points
+12. Open points
+13. Static diagrams
+14. Dynamic diagrams
 
 Expected content of those chapters:
 - `Versions` is a table with the version, the date, and a short description of the change,
@@ -71,6 +72,18 @@ Expected content of those chapters:
   An existing document without this chapter gets it only when the update concerns security, as the
   last chapter before the diagram chapters; the existing chapters are never renumbered, since other
   documents refer to them by number.
+- `API` describes each endpoint added or changed by the feature, in one sub-section per endpoint, named after
+  its need rather than after its route. Each sub-section starts with one sentence on what the endpoint does,
+  then gives two tables of its own:
+  - `Endpoint | Parameters | Payload | Response | Authorization`: the method and the route; the route and query
+    parameters with their type; the request body and the response, by the name of their model; the policy or
+    the roles
+  - `HTTP status | Condition`: one row per cause, also when several causes share a status, with the condition in
+    functional terms rather than the exception message
+
+  A structured payload or response gets its own `Property | Type | Details` table, followed by a JSON example.
+  An endpoint that the feature only uses isn't described. When the feature adds or changes no endpoint, the
+  chapter is omitted.
 - `Configuration` describes all new parameters, with their meaning and their default value.
 - `Deferred design points` lists the points that are decided but not implemented in the first
   version.
