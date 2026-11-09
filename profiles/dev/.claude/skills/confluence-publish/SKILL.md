@@ -29,6 +29,9 @@ description: Publish a Markdown document (design document, guide, and similar) t
   remote stops the publication, like a missing image: it is reported, never published as a broken
   link.
 - A table of contents written by hand in the document is reported (see "Table of contents").
+- The parent page of the document is resolved from the folders of the repository (see "Place of
+  the page in the page tree"). An ambiguous parent, or a parent document that isn't published yet,
+  stops the publication until the person decides; a missing folder page is created.
 
 ## Page content
 
@@ -124,10 +127,43 @@ outside it (e.g. in a repository under `/workspace`) is refused by the server.
   gateway.
 - The folder of the document is deleted once the publication is checked.
 
+## Place of the page in the page tree
+
+The page tree mirrors the folders of the repository below the root folder of the documents (e.g.
+`design/`), which matches the root page given by the person (e.g. Design-Spezificationen). A
+document is never published flat under the root page when it sits in a sub-folder.
+
+- Each folder between the root folder and the folder of the document is a parent page:
+  - a folder without a `spec.md` of its own (e.g. `design/ks-upload/`, which only holds the
+    sub-folders `ks-upload-import/` and `ks-upload-input-file/`) gets a folder page. Its title is
+    the folder name as it is (`ks-upload`). Its body is a short note naming the folder and the
+    repository, followed by the `children` macro, passed with `content_format: "storage"`:
+
+    ```
+    <p>Design documents of <topic>, published from the folder <code><folder path></code> of the repository <repository> (branch <branch>).</p><ac:structured-macro ac:name="children" ac:schema-version="2"><ac:parameter ac:name="all">false</ac:parameter></ac:structured-macro>
+    ```
+
+  - a folder with a `spec.md` of its own (e.g. `design/export/spec.md`, the general export design,
+    whose sub-designs are in `design/export/<sub-folder>/`) gets no folder page: the page of that
+    document is the parent page of the documents of its sub-folders. When that document isn't
+    published yet, it's reported, and the person decides whether it's published first.
+- An existing parent page is reused, never created twice. It's found from the conversation, or by
+  a search in the space for its note (the folder path, or the file path of its `spec.md`, and the
+  repository); more than one match isn't guessed and is reported. A page of the expected title
+  without the note (e.g. a page created by hand before the rule) isn't reused silently: it's
+  reported, and the person decides.
+- The parent pages are resolved, and the missing folder pages created, from the root page down to
+  the folder of the document, before the page of the document is created.
+- A page published at the wrong level is moved with `confluence_update_page` and `parent_id`. The
+  call needs the full body, so the body is generated again, and the update is a minor edit.
+- Existing pages that don't follow the rule (published before it, or from a document not migrated
+  to the repository yet) aren't moved unless the person asks for it.
+
 ## Publication steps
 
-1. A new page is created first (`confluence_create_page`), to get its id. An existing page keeps
-   its title, since other pages may link to it by title.
+1. A new page is created first (`confluence_create_page`), with the `parent_id` of its parent page
+   (see "Place of the page in the page tree"), to get its id. An existing page keeps its title,
+   since other pages may link to it by title.
 2. All the images and linked files of the document are uploaded as attachments of that page, in a
    single `confluence_upload_attachments` call with the page id and the paths of their copies in
    the drop folder. An attachment that already exists with the same name gets a new version, so
@@ -144,7 +180,10 @@ outside it (e.g. in a repository under `/workspace`) is refused by the server.
    - the table of contents macro is there, stored as a real macro
      (`ac:structured-macro ac:name="toc"` with an `ac:macro-id`; the Markdown view of the page
      shows it as the text `truenone`)
+   - the page is a child of the expected parent page (`confluence_get_page_children` of the
+     parent), and each folder page created holds the `children` macro
 
-   The result is reported with the list of uploaded files, the rewritten links with their new
-   target, the hand-written table of contents removed, if any, and the unreferenced files found in
+   The result is reported with the place of the page in the page tree (parent pages, folder pages
+   created), the list of uploaded files, the rewritten links with their new target, the
+   hand-written table of contents removed, if any, and the unreferenced files found in
    `resources/`, if any.
