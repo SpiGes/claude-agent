@@ -56,7 +56,7 @@ conversion:
 - Each relative link to another file of the repository is rewritten to an absolute URL (see
   "Links to other files of the repository").
 - A page published from a versioned document starts with a note naming the repository and the
-  file, which is the reference: changes are made there, then published again.
+  file, which is the reference: changes are made there, then published again (see "Source note").
 - The Confluence table of contents macro follows the note (see "Table of contents").
 - The body is passed with `content_format: "markdown"`, through `content_file` when it is long.
 
@@ -67,6 +67,21 @@ element it targets (a link, a list item, a heading). The body is never patched a
 global text replacement (e.g. `sed` on the whole file): a replacement meant for one place also
 changes the others, e.g. a link URL rewritten together with the note. When the generated body is
 wrong, the preparation step is fixed and the body generated again.
+
+### Source note
+
+The note is the first line of the body, a blockquote written from this template, with the path of
+the file from the repository root, the name of the repository, and its default branch:
+
+```
+> **Note:** this page is published from the file `<path of the file>` of the repository <repository name> (branch <branch>), which is the reference. Changes are made in that file, then the page is published again.
+```
+
+- The name of the repository is plain text, without a link: the note names the reference, the
+  links of the page lead to the content.
+- The wording is kept as it is, since the note is also used to find a page already published (see
+  "Links to other files of the repository" and "Place of the page in the page tree"): a page with
+  another wording isn't found by the search.
 
 ### Links to other files of the repository
 
@@ -99,13 +114,16 @@ the page. It is inserted as a single line of storage XML, on its own line with a
 and after it, right after the note that names the repository and the file:
 
 ```
-<ac:structured-macro ac:name="toc" ac:schema-version="1"><ac:parameter ac:name="outline">true</ac:parameter><ac:parameter ac:name="style">none</ac:parameter></ac:structured-macro>
+<ac:structured-macro ac:name="toc" ac:schema-version="1"><ac:parameter ac:name="outline">false</ac:parameter><ac:parameter ac:name="style">none</ac:parameter></ac:structured-macro>
 ```
 
 This line goes through the Markdown converter of the server unchanged and is stored as a real
-macro. With `outline=true`, Confluence numbers the entries itself from the heading levels. A full
-update of the page body replaces the macro of an earlier version, so it is inserted at each
-publication.
+macro. A full update of the page body replaces the macro of an earlier version, so it is inserted
+at each publication.
+
+`outline` stays `false`: the chapters of a design document are already numbered in their headings
+(`design-documents` skill), and `outline=true` makes Confluence number the entries again from the
+heading levels, so each entry would show two numbers (e.g. `1 1. Versions`).
 
 A table of contents written by hand in the document (a heading such as `Table of contents` or
 `Contents` followed by a list of the chapters) is removed from the published copy, together with
@@ -177,9 +195,12 @@ document is never published flat under the root page when it sits in a sub-folde
    - the nested lists keep their levels, and no outer list item is merged into the text of a
      nested item
    - no link is broken: no red cross marker, no `<a>` without `href`, no relative `href` left
+   - the source note is the first element of the page, stored as a blockquote
+     (`<blockquote><p><strong>Note:</strong> ...`), with the wording of the template
    - the table of contents macro is there, stored as a real macro
-     (`ac:structured-macro ac:name="toc"` with an `ac:macro-id`; the Markdown view of the page
-     shows it as the text `truenone`)
+     (`ac:structured-macro ac:name="toc"` with an `ac:macro-id`), with `outline` set to `false`.
+     The Markdown view of the page only shows the parameter values as plain text (e.g. `truenone`),
+     so the check is made on the storage format (`convert_to_markdown: false`)
    - the page is a child of the expected parent page (`confluence_get_page_children` of the
      parent), and each folder page created holds the `children` macro
 
