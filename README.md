@@ -30,10 +30,9 @@ git clone <url-of-this-repository> ~/.agents/bfs-claude-agent
 ### 2. Build the images
 
 ```bash
-docker build -t bfs-claude-agent ~/.agents/bfs-claude-agent
-(source ~/.agents/bfs-claude-agent/launch.sh && claude_services_build)
+(source ~/.agents/bfs-claude-agent/launch.sh && claude_agent_build && claude_services_build)
 ```
-The first command builds the image of the agent, the second the images of the service containers (secret broker, MCP gateway, MCP servers, see "Service images"). The agent image is needed again after a change to the `Dockerfile`, to `entrypoint.sh`, to `notifications/agent-notify`, to the scripts under `hooks/`, to `broker/git_credential_broker.py`, `broker/mcp_call.py` or `broker/gh`, under `tools/`, or to the certificates under `certs/`; the service images after a change under `services/` or `broker/`, to `notifications/agent-notify`, or to the certificates.
+`claude_agent_build` builds the image of the agent, `claude_services_build` the images of the service containers (secret broker, MCP gateway, MCP servers, see "Service images"). Both first pull the base images of their Dockerfile with `docker pull`, then build: from the corporate network, the Docker engine reaches Docker Hub, but BuildKit, which runs the build, doesn't; it then finds the base images locally, by their digest. A plain `docker build` fails on a base image that isn't in the local cache yet. The agent image is needed again after a change to the `Dockerfile`, to `entrypoint.sh`, to `notifications/agent-notify`, to the scripts under `hooks/`, to `broker/git_credential_broker.py`, `broker/mcp_call.py` or `broker/gh`, under `tools/`, or to the certificates under `certs/`; the service images after a change under `services/` or `broker/`, to `notifications/agent-notify`, or to the certificates.
 
 ### 3. Create the personal folders
 
@@ -312,7 +311,8 @@ With the voice input enabled, every process of the container can record the micr
 | `claude_broker` / `claude_broker_stop` | Starts and unlocks the secret broker, or stops it (see "Secret broker"); `claude_dev` starts it when needed |
 | `claude_secret allow <group>` | Opens a group: `git`, `gh` (secret broker), `devops` (MCP gateway); also `revoke <group>\|all`, `status`, `pending`, `approve`, `deny`, `log`, `edit` (see "Secret broker", "MCP gateway") |
 | `claude_gateway` / `claude_gateway_stop` | Starts or stops the MCP gateway (see "MCP gateway") |
-| `claude_services_build [--refresh]` | Builds the images of the service containers; `--refresh` fetches the base image and the Ubuntu packages again (see "Service images") |
+| `claude_agent_build [--refresh]` | Builds the image of the agent, after pulling its base images; `--refresh` builds every layer again, for the security updates of the Ubuntu packages (see "Dependencies") |
+| `claude_services_build [--refresh]` | Builds the images of the service containers, after pulling their base image; `--refresh` as above (see "Service images") |
 | `claude_mcp start\|stop\|restart <server>` | Starts, stops, or restarts the container of an MCP server (`devops`, `jira`, `confluence`), with its token from the secret broker; `start` returns once the server accepts connections (see "MCP gateway") |
 
 Each command starts a new container, removed on exit (--rm); nothing needs to be stopped or cleaned up by hand. Several agents can run at the same time, see "Several agents at the same time" below.
@@ -461,11 +461,11 @@ The secret broker, the MCP gateway and the MCP servers run from images of their 
 | `atlassian` | `base` + `mcp-atlassian` | `claude-mcp-jira`, `claude-mcp-confluence` |
 | `devops` | `base` + `mcp-devops-onpremise` | `claude-mcp-devops` |
 
-`claude_services_build` builds every target, from the clone of this repository, and labels each image with the commit it comes from (`org.opencontainers.image.revision`). `claude_broker`, `claude_gateway` and `claude_mcp start` refuse to start when the image of their target is missing, and restart a container that runs an older image of its target. `claude_services_build --refresh` fetches the base image and runs every step again (`--pull --no-cache`), so that the Ubuntu packages get their latest security updates; it's run once a month, and when an advisory concerns a package of Ubuntu.
+`claude_services_build` builds every target, from the clone of this repository, and labels each image with the commit it comes from (`org.opencontainers.image.revision`). `claude_broker`, `claude_gateway` and `claude_mcp start` refuse to start when the image of their target is missing, and restart a container that runs an older image of its target. `claude_services_build --refresh` runs every step again (`--no-cache`), so that the Ubuntu packages get their latest security updates; it's run once a month, and when an advisory concerns a package of Ubuntu. The base image is pulled with `docker pull` before the build (see Installation, Step 2); `--pull` isn't used, since it makes BuildKit fetch it from Docker Hub.
 
 How the images are built:
 
-- **Pinned inputs**: the base image by tag and digest (`ubuntu:noble@sha256:...`, from the mirror of the official Docker images on the Microsoft registry, `mcr.microsoft.com/mirror/docker/library/`, since Docker Hub isn't reachable from the corporate network), the Python packages by version and hash, transitive dependencies included (`services/<target>/requirements.txt`, see "Dependencies"), Oracle Instant Client by URL and SHA-256. The Ubuntu packages come from the signed archive of Ubuntu.
+- **Pinned inputs**: the base image by tag and digest (`ubuntu:noble@sha256:...`), the Python packages by version and hash, transitive dependencies included (`services/<target>/requirements.txt`, see "Dependencies"), Oracle Instant Client by URL and SHA-256. The Ubuntu packages come from the signed archive of Ubuntu.
 - **Multi-stage**: the virtual environments are built in a stage of their own, with `pip install --require-hashes --only-binary=:all: --no-deps` (wheels only, every file checked against its hash, no package outside the lock), then `pip` is removed from them and they're copied into their target. `curl` and `unzip` stay in the download stage of Instant Client. No compiler, `pip` cache or package list reaches an image.
 - **Unprivileged**: the default user of the images is `service` (uid 10001, no login, no home); `launch.sh` runs every container with the account of the person, without capability, without privilege escalation, with a read-only file system and a tmpfs for `/tmp`.
 - **No secret in an image**: the secrets reach the running containers only, from the secret broker (see "MCP gateway"); no build argument holds one.
@@ -511,10 +511,10 @@ npm audit --package-lock-only --registry=https://registry.npmjs.org/
 
 `--uploaded-prior-to=P14D` and `--before` apply the cooldown to every package of the lock, transitive ones included. Then the images are rebuilt and tested (see "MCP gateway", Setup). An update of `mcp-atlassian` or `mcp-devops-onpremise` also checks the names of their tools: the policies of the gateway (`broker/claude_gateway.py`) and the `deny` and `ask` rules of `profiles/dev/settings.json` refer to them, and a renamed tool would escape them.
 
-**Monthly rebuild.** The Ubuntu packages, `gh` and Git get their security updates only when their layers are built again. Once a month, and when an advisory concerns one of them, both images are rebuilt without cache:
+**Monthly rebuild.** The Ubuntu packages, `gh` and Git get their security updates only when their layers are built again. Once a month, and when an advisory concerns one of them, both images are rebuilt without cache (a new digest of a base image comes through Dependabot, and is pulled by the next build):
 
 ```bash
-docker build --pull --no-cache -t bfs-claude-agent ~/.agents/bfs-claude-agent
+claude_agent_build --refresh
 claude_services_build --refresh
 ```
 
@@ -574,7 +574,7 @@ A profile is made of two required files, and optional context folders:
 - `mcp.json` (optional): declares MCP servers for that profile; whether this file exists is the only thing that decides whether it gets mounted, with no other configuration needed.
 - `.claude/rules/`, `.claude/skills/`, `.claude/docs/` (optional): mounted automatically when present.
 
-Changing a profile does not require rebuilding the image (docker build); these files are mounted read-only at every launch, not copied into the image. A plain `git pull` on this repository is enough to apply an update at the next launch.
+Changing a profile does not require rebuilding the image (`claude_agent_build`); these files are mounted read-only at every launch, not copied into the image. A plain `git pull` on this repository is enough to apply an update at the next launch.
 
 ### Optional MCP integrations (dev profile)
 
