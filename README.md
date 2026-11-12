@@ -465,7 +465,7 @@ The secret broker, the MCP gateway and the MCP servers run from images of their 
 
 How the images are built:
 
-- **Pinned inputs**: the base image by tag and digest (`ubuntu:noble@sha256:...`), the Python packages by version and hash, transitive dependencies included (`services/<target>/requirements.txt`, see "Dependencies"), Oracle Instant Client by URL and SHA-256. The Ubuntu packages come from the signed archive of Ubuntu.
+- **Pinned inputs**: the base image by tag and digest (`ubuntu:noble@sha256:...`, from the mirror of the official Docker images on the Microsoft registry, `mcr.microsoft.com/mirror/docker/library/`, since Docker Hub isn't reachable from the corporate network), the Python packages by version and hash, transitive dependencies included (`services/<target>/requirements.txt`, see "Dependencies"), Oracle Instant Client by URL and SHA-256. The Ubuntu packages come from the signed archive of Ubuntu.
 - **Multi-stage**: the virtual environments are built in a stage of their own, with `pip install --require-hashes --only-binary=:all: --no-deps` (wheels only, every file checked against its hash, no package outside the lock), then `pip` is removed from them and they're copied into their target. `curl` and `unzip` stay in the download stage of Instant Client. No compiler, `pip` cache or package list reaches an image.
 - **Unprivileged**: the default user of the images is `service` (uid 10001, no login, no home); `launch.sh` runs every container with the account of the person, without capability, without privilege escalation, with a read-only file system and a tmpfs for `/tmp`.
 - **No secret in an image**: the secrets reach the running containers only, from the secret broker (see "MCP gateway"); no build argument holds one.

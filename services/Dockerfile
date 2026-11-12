@@ -19,8 +19,10 @@
 
 # --- Common layer of every service: Python of the distribution, BIT certificates, unprivileged user. Ubuntu 24.04, ---
 # --- the distribution of the agent image: same packages (e.g. libaio1t64), same Python, same handling of the BIT ---
-# --- certificates. Written in full in FROM (no ARG), so that Dependabot updates its digest. ---
-FROM ubuntu:noble@sha256:2198e4c65076e9cb0b3d695219df667c0e3b0072da64ca3c2648aca17dcecaf5 AS os
+# --- certificates. Taken from the mirror of the official Docker images on the Microsoft registry, the registry of ---
+# --- the .NET SDK of the agent image: Docker Hub isn't reachable from the corporate network. Written in full in FROM ---
+# --- (no ARG), so that Dependabot updates its digest. ---
+FROM mcr.microsoft.com/mirror/docker/library/ubuntu:noble@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852 AS os
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates python3 \
