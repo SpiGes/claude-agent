@@ -87,6 +87,21 @@ RUN url=https://download.oracle.com/otn_software/linux/instantclient/2326400/ins
     && mv /opt/oracle/instantclient_* /opt/oracle/instantclient \
     && rm /tmp/instantclient.zip
 
+# --- Build stage of age (secrets file of the broker), compiled from its sources instead of taken from Ubuntu: the ---
+# --- age of Ubuntu 24.04 is built with Go 1.22, whose standard library has known vulnerabilities. The Go image is ---
+# --- pinned by tag and digest (Dependabot); go install checks the module against the Go checksum database ---
+# --- (sum.golang.org). Go 1.27.4 is a security release, adopted before the cooldown of 14 days. A static binary, ---
+# --- without cgo; the version of age is updated by hand (README, "Dependencies"). ---
+FROM golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS age-builder
+COPY --chmod=0644 certs/bit-proxy-ca.pem /usr/local/share/ca-certificates/bit-proxy-ca.crt
+COPY --chmod=0644 certs/nexus-ca.pem /usr/local/share/ca-certificates/nexus-ca.crt
+COPY --chmod=0644 certs/swissgov-root.cer /usr/local/share/ca-certificates/swissgov-root.crt
+RUN update-ca-certificates
+ENV CGO_ENABLED=0 \
+    GOFLAGS=-trimpath \
+    GOTOOLCHAIN=local
+RUN go install filippo.io/age/cmd/age@v1.3.2
+
 # --- base: the MCP gateway and the Keycloak MCP server; the other targets add to it. ---
 FROM os AS base
 ARG VCS_REF=unknown
@@ -119,12 +134,13 @@ RUN for command in agent-notify claude-broker claude-gateway age-passphrase clau
     && test -r /opt/claude-agent/broker/access.py && test -r /opt/claude-agent/broker/mcp_server.py
 
 # --- broker: the secret broker and the container of claude_secret edit. age encrypts the secrets file with a ---
-# --- passphrase (no plugin); nano edits it in the disposable container. ---
+# --- passphrase (no plugin), from the age-builder stage; nano edits it in the disposable container. ---
 FROM base AS broker
 USER root
 ARG DEBIAN_FRONTEND=noninteractive
+COPY --from=age-builder --chmod=0755 /go/bin/age /usr/local/bin/age
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends age nano \
+    && apt-get install -y --no-install-recommends nano \
     && rm -rf /var/lib/apt/lists/* \
     && install -d -m 0755 /usr/local/share/claude-broker
 COPY --chmod=0644 broker/secrets.example /usr/local/share/claude-broker/secrets.example
