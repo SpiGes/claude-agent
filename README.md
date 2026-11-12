@@ -27,12 +27,13 @@ The minimum steps, all run from WSL2. The reasons behind them are given in "Inst
 git clone <url-of-this-repository> ~/.agents/bfs-claude-agent
 ```
 
-### 2. Build the image
+### 2. Build the images
 
 ```bash
 docker build -t bfs-claude-agent ~/.agents/bfs-claude-agent
+(source ~/.agents/bfs-claude-agent/launch.sh && claude_services_build)
 ```
-Needed again only after a change to the Dockerfile, to `entrypoint.sh`, to `notifications/agent-notify`, to the scripts under `hooks/` or `broker/`, or to the certificates under `certs/`.
+The first command builds the image of the agent, the second the images of the service containers (secret broker, MCP gateway, MCP servers, see "Service images"). The agent image is needed again after a change to the `Dockerfile`, to `entrypoint.sh`, to `notifications/agent-notify`, to the scripts under `hooks/`, to `broker/git_credential_broker.py`, `broker/mcp_call.py` or `broker/gh`, or to the certificates under `certs/`; the service images after a change under `services/` or `broker/`, to `notifications/agent-notify`, or to the certificates.
 
 ### 3. Create the personal folders
 
@@ -311,6 +312,7 @@ With the voice input enabled, every process of the container can record the micr
 | `claude_broker` / `claude_broker_stop` | Starts and unlocks the secret broker, or stops it (see "Secret broker"); `claude_dev` starts it when needed |
 | `claude_secret allow <group>` | Opens a group: `git`, `gh` (secret broker), `devops` (MCP gateway); also `revoke <group>\|all`, `status`, `pending`, `approve`, `deny`, `log`, `edit` (see "Secret broker", "MCP gateway") |
 | `claude_gateway` / `claude_gateway_stop` | Starts or stops the MCP gateway (see "MCP gateway") |
+| `claude_services_build [--refresh]` | Builds the images of the service containers; `--refresh` fetches the base image and the Ubuntu packages again (see "Service images") |
 | `claude_mcp start\|stop\|restart <server>` | Starts, stops, or restarts the container of an MCP server (`devops`, `jira`, `confluence`), with its token from the secret broker; `start` returns once the server accepts connections (see "MCP gateway") |
 
 Each command starts a new container, removed on exit (--rm); nothing needs to be stopped or cleaned up by hand. Several agents can run at the same time, see "Several agents at the same time" below.
@@ -343,7 +345,7 @@ The Git tokens and the GitHub API token aren't given to the agent container at s
 ### How it works
 
 - **Encrypted secrets file**: `$AGENT_VAULT_DIR/secrets.age` (default `~/.claude-agent-homes/vault`), encrypted with `age` and a passphrase. It's decrypted only inside the broker container, into its memory: the clear text never reaches a disk. `claude_broker` asks for the passphrase when the broker is locked; `claude_dev` calls it at each start.
-- **A separate container**: the broker runs from the agent image, with no capability, no privilege escalation, a read-only file system, the secrets file mounted read-only, and neither the workspace nor the NuGet cache mounted. The agent can't read its memory or its environment, and nothing the agent can change runs in it. It keeps running between the agent sessions, and is locked again when it restarts. After the image is rebuilt, `claude_broker` (and so `claude_dev`) restarts it on the new image, and asks for the passphrase again.
+- **A separate container**: the broker runs from the `broker` service image (see "Service images"), with no capability, no privilege escalation, a read-only file system, the secrets file mounted read-only, and neither the workspace nor the NuGet cache mounted. The agent can't read its memory or its environment, and nothing the agent can change runs in it. It keeps running between the agent sessions, and is locked again when it restarts. After its image is rebuilt, `claude_broker` (and so `claude_dev`) restarts it on the new image, and asks for the passphrase again.
 - **Docker network**: the agent containers and the broker share the network `AGENT_NETWORK` (default `bfs-claude-agent`); the agent reaches the broker at `http://claude-broker:8080` (`BROKER_URL`). A container outside this network, e.g. a build container, can't reach it.
 - **Groups**: `git` (the Git tokens) and `gh` (the GitHub API token). A group is opened with `claude_secret allow <group>`, which runs the command in the broker with `docker exec`: the agent container has no access to Docker, so it can't open a group by itself. A group closes `BROKER_IDLE_MINUTES` (default 30) after its last use, and `BROKER_MAX_HOURS` (default 4) after it was opened, whichever comes first. Both can be exported in `~/.bashrc`, and apply at the next start of the broker.
 - **Clients in the agent container**: Git asks the broker through a credential helper (`git-credential-broker`) when a server requires authentication, and before every request to the Azure DevOps Server, which gets Basic authentication right away (it also offers NTLM, which curl would prefer and which fails with a PAT); `gh` through a wrapper (`/usr/local/bin/gh`) that gets the token for each call. The Git settings are written at startup into `/tmp/gitconfig-broker`, included by the system configuration of the image, only when `BROKER_URL` is set: a container of the image without broker (e.g. a build container) keeps its own Git settings, and the wrapper of `gh` runs the real `gh` as is.
@@ -409,13 +411,13 @@ agent container ──► claude-gateway ──► claude-mcp-devops     (DEVOPS
 | `oracle` (`claude-mcp-oracle`) | `oracle` | `oracle_query` (one read-only query) goes through while the group is open; `oracle_write` and `oracle_processing_run` need an approval, with the statement shown on the host; called by the `spiges-sql` skill through `mcp-call` |
 
 - **mcp-call**: `mcp-call <server> <tool> [<arguments as JSON>]` calls one tool through the gateway from a script, and prints the text of its result (tool error: exit code 1, on stderr). A skill uses it when the result mustn't reach the conversation, e.g. `token=$(mcp-call keycloak keycloak_token '{"profile": "bfs"}')`. It waits 180 seconds for the answer, or `MCP_CALL_TIMEOUT_SECONDS` (at most 3600), e.g. for a call that runs for minutes after its approval.
-- **Oracle server**: it holds the accounts of the REF and TST SpiGes Oracle databases, and the secret of the technical SIS client (`SPIGES_KEYCLOAK_SPIGES_CLIENT_SECRET`, also in the Keycloak server) for the processing areas. It runs `oracledb` in thick mode, on Oracle Instant Client Basic Light (`/opt/oracle/instantclient`, official download pinned by its SHA-256 in the Dockerfile, free to use and to redistribute under the Oracle Free Use Terms and Conditions), since the SpiGes databases require the native network encryption of Oracle, which the thin mode doesn't support; `oracledb` and its dependencies are in a virtual environment of the image (`/opt/claude-mcp-oracle`, pinned with their hashes in `broker/oracle-requirements.txt`). Its controls don't depend on the client: targets `ref` and `tst` only; right after the connection, the service must be `EDWHPDSRV` (non-production), otherwise nothing runs; `oracle_query` accepts one `SELECT` or `WITH` (no `INTO`, `FOR UPDATE`, or inline PL/SQL), run in a read-only transaction that is rolled back; `oracle_write` accepts one `INSERT`, `UPDATE` (with `WHERE`) or `DELETE` (with `WHERE`), committed only when it touches the expected number of rows; `oracle_processing_run` recreates the processing area of a run (Mediator), reads its connection (DAL), runs one read-only query on it, and always drops it, so that the connection of the area never leaves the server. A function with side effects called from a query isn't stopped: only the rights of the account can. The sessions show `claude-agent` in `V$SESSION`.
+- **Oracle server**: it holds the accounts of the REF and TST SpiGes Oracle databases, and the secret of the technical SIS client (`SPIGES_KEYCLOAK_SPIGES_CLIENT_SECRET`, also in the Keycloak server) for the processing areas. It runs `oracledb` in thick mode, on Oracle Instant Client Basic Light (`/opt/oracle/instantclient`, official download pinned by its SHA-256 in `services/Dockerfile`, free to use and to redistribute under the Oracle Free Use Terms and Conditions), since the SpiGes databases require the native network encryption of Oracle, which the thin mode doesn't support; `oracledb` and its dependencies are in a virtual environment of the `oracle` service image (`/opt/claude-mcp-oracle`, pinned with their hashes in `services/oracle/requirements.txt`). Its controls don't depend on the client: targets `ref` and `tst` only; right after the connection, the service must be `EDWHPDSRV` (non-production), otherwise nothing runs; `oracle_query` accepts one `SELECT` or `WITH` (no `INTO`, `FOR UPDATE`, or inline PL/SQL), run in a read-only transaction that is rolled back; `oracle_write` accepts one `INSERT`, `UPDATE` (with `WHERE`) or `DELETE` (with `WHERE`), committed only when it touches the expected number of rows; `oracle_processing_run` recreates the processing area of a run (Mediator), reads its connection (DAL), runs one read-only query on it, and always drops it, so that the connection of the area never leaves the server. A function with side effects called from a query isn't stopped: only the rights of the account can. The sessions show `claude-agent` in `V$SESSION`.
 - **Keycloak server**: it reads the profiles from the clients file (`<profile>=<client id>` lines, no secret), `$AGENT_KEYCLOAK_CLIENTS_FILE` (default `$AGENT_HOMES_DIR/keycloak-clients.txt`), mounted read only: after a change of the file, `claude_mcp restart keycloak`. The file is the list of the clients the agent may get a token for, and the user clients share one secret: it's kept out of the folders mounted in the agent container (not under `/shared`), so that the agent can't add a client to it. The secret of a profile is `SPIGES_KEYCLOAK_<PROFILE>_CLIENT_SECRET`, or else the shared `SPIGES_KEYCLOAK_USER_CLIENT_SECRET`. A token is cached until one minute before its expiry.
 - **SAS server**: it runs `ssh` and `scp` to the SAS server of REF (`pssas10i02` by default, or `sas94`, the new server of the migration; hosts and REF SAS command fixed in `broker/claude_mcp_sas.py`), with the account of the secrets file. The host keys are pinned in `$AGENT_SAS_KNOWN_HOSTS_FILE` (default `$AGENT_HOMES_DIR/sas-known-hosts`, a `known_hosts` file), mounted read only and kept out of the folders mounted in the agent container, so that the agent can't change them. The password reaches `ssh` through `SSH_ASKPASS` only, never on a command line. After a rejected login, the server refuses every next call until `claude_mcp restart sas`: the account is a technical account shared with the SpiGes backend, which repeated failures could lock. The remote paths are relative to `~/agent`, without `..`; the local files are read and written only in the drop folder `/shared/mcp-sas` (`$AGENT_MCP_SAS_DIR`, default `$SHARED_BASE_DIR/mcp-sas`), mounted at the same path as in the agent. The local files are never opened by `ssh` or `scp`: the server opens each one itself without following a link, checks the real path of the open file, and copies it through a private temporary folder, so that a link placed in the drop folder meanwhile can't make `scp` read or write another file of the container. A command or a SAS program can run for 14 minutes at most; with the approval time, the `sas` server of `mcp.json` sets `"timeout": 1020000` (17 minutes).
 
 ### How it works
 
-- **Containers without coupling**: `claude_gateway` starts the gateway, `claude_mcp start <server>` an MCP server; neither starts the other, and `claude_dev` starts neither. A missing container only makes the calls that need it fail, with the command to run. After a restart of Docker, `claude_mcp start <server>` is run again for each server (the gateway restarts by itself, with every group closed). `claude_gateway` restarts a gateway started from an older image or with other routes.
+- **Containers without coupling**: `claude_gateway` starts the gateway, `claude_mcp start <server>` an MCP server; neither starts the other, and `claude_dev` starts neither. A missing container only makes the calls that need it fail, with the command to run. After a restart of Docker, `claude_mcp start <server>` is run again for each server (the gateway restarts by itself, with every group closed). `claude_gateway` restarts a gateway started from an older image or with other routes, and `claude_mcp start` a server started from an older image.
 - **Networks**: the gateway is on the network of the agents (`http://claude-gateway:8090/mcp/<server>`, the servers of `profiles/dev/mcp.json`). Each MCP server has a Docker network of its own, `<AGENT_MCP_NETWORK_PREFIX>-<server>` (default `bfs-claude-agent-mcp-<server>`), whose only members are its container and the gateway; the server reaches its remote service through it. The MCP servers have no authentication: Docker isolates the networks from each other, so neither the agent, nor another MCP container, nor a container started without `--network` reaches them. `claude_mcp start` creates the network and connects the gateway when it runs; `claude_gateway` connects to the networks created before it.
 - **Tokens**: the tokens are secrets of type 2 of the secrets file of the broker. The broker never hands them out on the network: `claude_mcp start` reads the secrets of the server through `docker exec` (`claude-broker ctl export`, one or several per server), and writes them as `KEY=value` lines straight into the tmpfs of the MCP container, through a pipe between two `docker exec`. The server reads them and the file is removed: they're neither on a disk nor in the configuration of the container (`docker inspect`), only in the memory of the server.
 - **Jira and Confluence servers**: `mcp-atlassian` runs one service per container, so that each container holds one token. Over HTTP, it refuses by default a request without credentials of its own, so that an unknown caller doesn't act with the token of the server: `ALLOW_GLOBAL_CRED_FALLBACK=true` lets it serve the gateway, which is the only one to reach it and forwards no credential header (only the headers of the MCP transport go through). The token reaches `mcp-atlassian` through a file of settings (`--env-file` in the tmpfs, removed by `claude_mcp start` once the server listens), never through its environment: the initial environment of a process (`/proc/self/environ`) is a file, which a tool that reads files could reach.
@@ -431,7 +433,7 @@ agent container ──► claude-gateway ──► claude-mcp-devops     (DEVOPS
 
 1. The tokens are added to the secrets file (`claude_secret edit`: `DEVOPS_PAT`, `JIRA_PERSONAL_TOKEN`, `CONFLUENCE_PERSONAL_TOKEN`, `SPIGES_KEYCLOAK_USER_CLIENT_SECRET`, `SPIGES_KEYCLOAK_SAS_CLIENT_SECRET`, `SPIGES_KEYCLOAK_SPIGES_CLIENT_SECRET`, `SPIGES_SAS_REF_SSH_USER`, `SPIGES_SAS_REF_SSH_PASSWORD`, `SPIGES_ORACLE_REF_USER`, `SPIGES_ORACLE_REF_PASSWORD`, `SPIGES_ORACLE_REF_DATASOURCE`, and the same three for `TST`), and removed from `.env`.
 2. The Keycloak clients file is placed at `$AGENT_KEYCLOAK_CLIENTS_FILE` (default `~/.claude-agent-homes/keycloak-clients.txt`, on WSL), and the pinned host keys of the SAS servers at `$AGENT_SAS_KNOWN_HOSTS_FILE` (default `~/.claude-agent-homes/sas-known-hosts`).
-3. The image is rebuilt, then: `claude_broker` (unlock), `claude_gateway`, and `claude_mcp start <server>` for each server.
+3. The service images are rebuilt (`claude_services_build`), then: `claude_broker` (unlock), `claude_gateway`, and `claude_mcp start <server>` for each server.
 4. A workspace that declares the Jira server in its own `.mcp.json` points it to the gateway: `"jira": {"type": "http", "url": "http://claude-gateway:8090/mcp/jira", "timeout": 180000}`.
 5. `claude_dev`; when the gateway or an MCP container started after the agent, `/mcp` in Claude Code reconnects the server.
 
@@ -445,6 +447,47 @@ claude_secret approve --tool 5m     # ... and the next calls of the same tool by
 claude_secret deny                  # refuses the oldest one
 claude_mcp restart confluence       # e.g. after a new token in the secrets file
 ```
+
+## Service images
+
+The secret broker, the MCP gateway and the MCP servers run from images of their own, built from `services/Dockerfile`, not from the image of the agent. Each container only holds what it runs: no .NET SDK, Node, Git, or `gh` next to the secrets, no tool of a service in the agent, and a rebuild of the agent image doesn't restart the services.
+
+| Image (`bfs-claude-services:<target>`) | Content | Containers |
+|---|---|---|
+| `base` | Python 3.12 of Ubuntu 24.04, BIT certificates, modules of `broker/`, `agent-notify` | `claude-gateway`, `claude-mcp-keycloak` |
+| `broker` | `base` + `age`, `nano` | `claude-broker`, the container of `claude_secret edit` |
+| `sas` | `base` + OpenSSH client | `claude-mcp-sas` |
+| `oracle` | `base` + Oracle Instant Client, `oracledb` | `claude-mcp-oracle` |
+| `atlassian` | `base` + `mcp-atlassian` | `claude-mcp-jira`, `claude-mcp-confluence` |
+| `devops` | `base` + `mcp-devops-onpremise` | `claude-mcp-devops` |
+
+`claude_services_build` builds every target, from the clone of this repository, and labels each image with the commit it comes from (`org.opencontainers.image.revision`). `claude_broker`, `claude_gateway` and `claude_mcp start` refuse to start when the image of their target is missing, and restart a container that runs an older image of its target. `claude_services_build --refresh` fetches the base image and runs every step again (`--pull --no-cache`), so that the Ubuntu packages get their latest security updates; it's run once a month, and when an advisory concerns a package of Ubuntu.
+
+How the images are built:
+
+- **Pinned inputs**: the base image by tag and digest (`ubuntu:noble@sha256:...`), the Python packages by version and hash, transitive dependencies included (`services/<target>/requirements.txt`, see "Dependencies"), Oracle Instant Client by URL and SHA-256. The Ubuntu packages come from the signed archive of Ubuntu.
+- **Multi-stage**: the virtual environments are built in a stage of their own, with `pip install --require-hashes --only-binary=:all: --no-deps` (wheels only, every file checked against its hash, no package outside the lock), then `pip` is removed from them and they're copied into their target. `curl` and `unzip` stay in the download stage of Instant Client. No compiler, `pip` cache or package list reaches an image.
+- **Unprivileged**: the default user of the images is `service` (uid 10001, no login, no home); `launch.sh` runs every container with the account of the person, without capability, without privilege escalation, with a read-only file system and a tmpfs for `/tmp`.
+- **No secret in an image**: the secrets reach the running containers only, from the secret broker (see "MCP gateway"); no build argument holds one.
+- **Small build context**: `.dockerignore` is an allow list of the files that the two Dockerfiles copy; the `.git` folder, `.env`, the profiles and the tests never reach the build.
+- **Build checks**: `services/Dockerfile` starts with `# check=error=true`, so that a warning of the Docker build checks fails the build.
+
+## Dependencies
+
+The Python packages of the service images are locked per target, in `services/<target>/requirements.txt`, generated with `pip-compile` (pip-tools) from `services/<target>/requirements.in`, which names the direct packages only. A lock holds the exact version and the hashes of every package, transitive ones included.
+
+A new release is adopted once it's at least 14 days old: a release replaced on purpose (e.g. after a compromised publication) is usually found and withdrawn within days. A release that fixes a security advisory is adopted at once, when it's published with an attestation of its origin (trusted publishing on PyPI) and no advisory concerns it; it's then pinned in the `requirements.in` of the target, with the advisory it fixes. The release notes are read before a version is chosen.
+
+A lock is updated in the virtual environment of the clone (see "Development"), where `pip-tools` is installed:
+
+```bash
+cd services/<target>
+../../.venv/bin/pip-compile --generate-hashes --allow-unsafe --strip-extras --no-emit-index-url \
+  --pip-args "--only-binary=:all: --uploaded-prior-to=P14D" -o requirements.txt requirements.in
+../../.venv/bin/pip-audit --require-hashes --disable-pip -r requirements.txt
+```
+
+`--uploaded-prior-to=P14D` applies the 14 days to every package of the lock, transitive ones included. `pip-audit` checks each version against the advisories of PyPI and OSV; an advisory is checked against the code that runs (is the vulnerable function reached by the service?) before a version is kept. Then the images are rebuilt and the services tested (see "MCP gateway", Setup). An update of `mcp-atlassian` or `mcp-devops-onpremise` also checks the names of their tools: the policies of the gateway (`broker/claude_gateway.py`) and the `deny` and `ask` rules of `profiles/dev/settings.json` refer to them, and a renamed tool would escape them.
 
 ## Several agents at the same time
 
@@ -524,9 +567,15 @@ The dev profile's `mcp.json` currently declares three MCP servers; confluence an
 
 ```
 bfs-claude-agent/
-  Dockerfile
+  Dockerfile                 (image of the agent)
+  .dockerignore              (allow list of the build context of both Dockerfiles)
   entrypoint.sh
   launch.sh
+  services/
+    Dockerfile               (images of the service containers, one target each, see "Service images")
+    atlassian/               (requirements.in, requirements.txt: locked Python packages, see "Dependencies")
+    devops/
+    oracle/
   notifications/
     agent-notify             (copied into the image)
     speak-relay.sh           (run on the WSL2 host)
@@ -534,7 +583,7 @@ bfs-claude-agent/
   hooks/
     agent-memory-sync        (copied into the image)
     agent-memory-guard       (copied into the image)
-  broker/                    (copied into the image)
+  broker/                    (copied into the service images; the clients into the agent image)
     access.py                (windows, notifications and commands of the host, shared by the broker and the gateway)
     claude_broker.py         (service of the secret broker, /usr/local/bin/claude-broker)
     claude_gateway.py        (service of the MCP gateway, /usr/local/bin/claude-gateway)

@@ -1,0 +1,14 @@
+# Build context of Dockerfile and services/Dockerfile: allow list. Everything else stays out of the context (e.g. .git,
+# .env, the profiles, the tests), so that a file can only reach an image when it's listed here.
+*
+!certs/bit-proxy-ca.pem
+!certs/nexus-ca.pem
+!certs/swissgov-root.cer
+!entrypoint.sh
+!notifications/agent-notify
+!hooks/agent-memory-sync
+!hooks/agent-memory-guard
+!broker/*.py
+!broker/gh
+!broker/secrets.example
+!services/*/requirements.txt
