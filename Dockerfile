@@ -218,10 +218,17 @@ ENV PUPPETEER_CACHE_DIR=/opt/puppeteer
 # - @mermaid-js/mermaid-cli (`mmdc`): renders Mermaid diagram code to PNG/SVG/PDF. Its install script downloads
 #   chrome-headless-shell (Puppeteer), so the install scripts run.
 # - json5: prints plain JSON from a JSON file with comments and a BOM (e.g. the backend appsettings.json), for jq
+# The folder is created first: a folder created by COPY --chmod takes the mode of the files (0644, which the user of the
+# container can't enter).
+RUN install -d -m 0755 /opt/agent-tools
 COPY --chmod=0644 tools/npm/package.json tools/npm/package-lock.json /opt/agent-tools/
 RUN npm ci --prefix /opt/agent-tools --omit=dev --no-audit --no-fund \
     && ln -s /opt/agent-tools/node_modules/.bin/ast-grep /opt/agent-tools/node_modules/.bin/sg \
         /opt/agent-tools/node_modules/.bin/mmdc /opt/agent-tools/node_modules/.bin/json5 /usr/local/bin/
+# Smoke test of the tools above, as an unprivileged user (the container runs with the account of the person).
+RUN setpriv --reuid=65534 --regid=65534 --clear-groups env HOME=/tmp SEMGREP_ENABLE_VERSION_CHECK=0 sh -ec ' \
+        yq --version; xq --version; tomlq --version; semgrep --version; \
+        ast-grep --version; sg --version; mmdc --version; json5 --version' >/dev/null
 # Global npm prefix at run time, after the installs above: `npm install -g` and `npm update -g`, used by
 # the self-update of Claude Code, write into /opt/claude-code instead of /usr/local.
 ENV NPM_CONFIG_PREFIX=/opt/claude-code

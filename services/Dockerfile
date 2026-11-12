@@ -98,7 +98,9 @@ LABEL org.opencontainers.image.title="bfs-claude-services" \
 COPY --chmod=0755 notifications/agent-notify /usr/local/bin/agent-notify
 # Python modules of the services (see broker/ and README, "Secret broker", "MCP gateway"). They stay together in
 # /opt/claude-agent/broker, so that each command finds the shared modules (access.py, mcp_server.py) next to it; the
-# commands are links to them.
+# commands are links to them. The folder is created first: a folder created by COPY --chmod takes the mode of the files
+# (0644, which an unprivileged user can't enter).
+RUN install -d -m 0755 /opt/claude-agent/broker
 COPY --chmod=0644 broker/access.py broker/mcp_server.py /opt/claude-agent/broker/
 COPY --chmod=0755 broker/claude_broker.py broker/claude_gateway.py broker/age_passphrase.py \
     broker/claude_mcp_keycloak.py broker/claude_mcp_sas.py broker/claude_mcp_oracle.py /opt/claude-agent/broker/
@@ -110,6 +112,11 @@ RUN ln -s /opt/claude-agent/broker/claude_broker.py /usr/local/bin/claude-broker
     && ln -s /opt/claude-agent/broker/claude_mcp_oracle.py /usr/local/bin/claude-mcp-oracle
 USER service
 WORKDIR /tmp
+# Smoke test, as the unprivileged user: every command and module is reachable.
+RUN for command in agent-notify claude-broker claude-gateway age-passphrase claude-mcp-keycloak claude-mcp-sas; do \
+        test -x "$(command -v "$command")" || { echo "$command not reachable" >&2; exit 1; }; \
+    done \
+    && test -r /opt/claude-agent/broker/access.py && test -r /opt/claude-agent/broker/mcp_server.py
 
 # --- broker: the secret broker and the container of claude_secret edit. age encrypts the secrets file with a ---
 # --- passphrase (no plugin); nano edits it in the disposable container. ---
@@ -118,9 +125,11 @@ USER root
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
     && apt-get install -y --no-install-recommends age nano \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && install -d -m 0755 /usr/local/share/claude-broker
 COPY --chmod=0644 broker/secrets.example /usr/local/share/claude-broker/secrets.example
 USER service
+RUN age --version >/dev/null && test -r /usr/local/share/claude-broker/secrets.example
 
 # --- sas: the SAS MCP server runs ssh and scp; the password reaches them through SSH_ASKPASS only. ---
 FROM base AS sas
@@ -130,6 +139,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends openssh-client \
     && rm -rf /var/lib/apt/lists/*
 USER service
+RUN ssh -V
 
 # --- oracle: oracledb runs in thick mode, since the SpiGes databases require the native network encryption of ---
 # --- Oracle, which the thin mode doesn't support. Instant Client looks for libaio.so.1, named libaio.so.1t64 since ---
@@ -146,6 +156,9 @@ RUN ln -s /usr/lib/x86_64-linux-gnu/libaio.so.1t64 /usr/lib/x86_64-linux-gnu/lib
     && ldconfig
 COPY --from=venv-oracle /opt/claude-mcp-oracle /opt/claude-mcp-oracle
 USER service
+# Smoke test: the command is reachable, and oracledb loads the Instant Client (thick mode), without any connection.
+RUN test -x "$(command -v claude-mcp-oracle)" \
+    && /opt/claude-mcp-oracle/bin/python3 -c "import oracledb; oracledb.init_oracle_client()"
 
 # --- atlassian: the Jira and Confluence MCP servers (one service per container). ---
 FROM base AS atlassian
@@ -153,6 +166,7 @@ USER root
 COPY --from=venv-atlassian /opt/mcp-atlassian /opt/mcp-atlassian
 RUN ln -s /opt/mcp-atlassian/bin/mcp-atlassian /usr/local/bin/mcp-atlassian
 USER service
+RUN mcp-atlassian --help >/dev/null
 
 # --- devops: the Azure DevOps MCP server. ---
 FROM base AS devops
@@ -160,3 +174,4 @@ USER root
 COPY --from=venv-devops /opt/mcp-devops-onpremise /opt/mcp-devops-onpremise
 RUN ln -s /opt/mcp-devops-onpremise/bin/mcp-devops-onpremise /usr/local/bin/mcp-devops-onpremise
 USER service
+RUN test -x "$(command -v mcp-devops-onpremise)" && /opt/mcp-devops-onpremise/bin/python3 -c "import mcp_devops"
