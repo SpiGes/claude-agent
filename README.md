@@ -33,7 +33,7 @@ git clone <url-of-this-repository> ~/.agents/bfs-claude-agent
 docker build -t bfs-claude-agent ~/.agents/bfs-claude-agent
 (source ~/.agents/bfs-claude-agent/launch.sh && claude_services_build)
 ```
-The first command builds the image of the agent, the second the images of the service containers (secret broker, MCP gateway, MCP servers, see "Service images"). The agent image is needed again after a change to the `Dockerfile`, to `entrypoint.sh`, to `notifications/agent-notify`, to the scripts under `hooks/`, to `broker/git_credential_broker.py`, `broker/mcp_call.py` or `broker/gh`, or to the certificates under `certs/`; the service images after a change under `services/` or `broker/`, to `notifications/agent-notify`, or to the certificates.
+The first command builds the image of the agent, the second the images of the service containers (secret broker, MCP gateway, MCP servers, see "Service images"). The agent image is needed again after a change to the `Dockerfile`, to `entrypoint.sh`, to `notifications/agent-notify`, to the scripts under `hooks/`, to `broker/git_credential_broker.py`, `broker/mcp_call.py` or `broker/gh`, under `tools/`, or to the certificates under `certs/`; the service images after a change under `services/` or `broker/`, to `notifications/agent-notify`, or to the certificates.
 
 ### 3. Create the personal folders
 
@@ -474,20 +474,51 @@ How the images are built:
 
 ## Dependencies
 
-The Python packages of the service images are locked per target, in `services/<target>/requirements.txt`, generated with `pip-compile` (pip-tools) from `services/<target>/requirements.in`, which names the direct packages only. A lock holds the exact version and the hashes of every package, transitive ones included.
+Every input of the two images has an exact version; nothing floats at a rebuild:
 
-A new release is adopted once it's at least 14 days old: a release replaced on purpose (e.g. after a compromised publication) is usually found and withdrawn within days. A release that fixes a security advisory is adopted at once, when it's published with an attestation of its origin (trusted publishing on PyPI) and no advisory concerns it; it's then pinned in the `requirements.in` of the target, with the advisory it fixes. The release notes are read before a version is chosen.
+| Input | Pinned by | Updated by |
+|---|---|---|
+| Base images: `dotnet/sdk` and `node` (`Dockerfile`), `ubuntu` (`services/Dockerfile`) | Tag and digest (`image:tag@sha256:...`) | Dependabot |
+| Python packages: services (`services/<target>/`), `yq` and `semgrep` of the agent (`tools/python/<tool>/`) | Lock with the version and hashes of every package, transitive ones included (`requirements.txt`, generated with `pip-compile` from `requirements.in`, which names the direct packages only); installed from wheels only, nothing outside the lock | Dependabot, or by hand (below) |
+| npm tools of the agent: `@ast-grep/cli`, `@mermaid-js/mermaid-cli`, `json5` (`tools/npm/`) | `package-lock.json`, with the integrity hash of every package; installed with `npm ci` | Dependabot, or by hand (below) |
+| Binaries downloaded with `curl`: Helm, Dart Sass, Oracle Instant Client | Version and SHA-256 in the Dockerfile | By hand |
+| .NET tools: `reportgenerator`, `ilspycmd` | Version in the Dockerfile (signed NuGet packages) | By hand |
+| Ubuntu packages, `gh`, Git (PPA) | Signed repositories, latest version at the build | Monthly rebuild (below) |
+| Claude Code | Latest version | Updates itself (see Installation details) |
 
-A lock is updated in the virtual environment of the clone (see "Development"), where `pip-tools` is installed:
+**Cooldown.** A new release is adopted once it's at least 14 days old: a compromised release is usually found and withdrawn within days. A release that fixes a security advisory is adopted at once, when it's published with an attestation of its origin (e.g. trusted publishing on PyPI) and no advisory concerns it; for a Python package, it's then pinned in the `requirements.in` of its lock, with the advisory it fixes. The release notes are read before a version is chosen.
+
+**Dependabot** (`.github/dependabot.yml`) proposes the new versions of the base images, of the Python locks and of the npm lock in pull requests, weekly, with the cooldown of 14 days; its security updates aren't delayed. Its alerts and security updates are enabled in the settings of the repository (Code security). A pull request of Dependabot is reviewed like any other: release notes, advisories (below), images rebuilt and tested on the host.
+
+**Advisories.** Each lock is checked before a merge, in the virtual environment of the clone (see "Development"): `pip-audit` for the Python locks, `npm audit` for the npm lock. An advisory is checked against the code that runs (is the vulnerable function reached by the tool or the service?) before a version is kept.
+
+A Python lock is updated by hand from the folder of the lock, with the tools of the clone:
 
 ```bash
-cd services/<target>
-../../.venv/bin/pip-compile --generate-hashes --allow-unsafe --strip-extras --no-emit-index-url \
+repo="$PWD"; cd services/<target>      # or tools/python/<tool>
+"$repo/.venv/bin/pip-compile" --generate-hashes --allow-unsafe --strip-extras --no-emit-index-url \
   --pip-args "--only-binary=:all: --uploaded-prior-to=P14D" -o requirements.txt requirements.in
-../../.venv/bin/pip-audit --require-hashes --disable-pip -r requirements.txt
+"$repo/.venv/bin/pip-audit" --require-hashes --disable-pip -r requirements.txt
 ```
 
-`--uploaded-prior-to=P14D` applies the 14 days to every package of the lock, transitive ones included. `pip-audit` checks each version against the advisories of PyPI and OSV; an advisory is checked against the code that runs (is the vulnerable function reached by the service?) before a version is kept. Then the images are rebuilt and the services tested (see "MCP gateway", Setup). An update of `mcp-atlassian` or `mcp-devops-onpremise` also checks the names of their tools: the policies of the gateway (`broker/claude_gateway.py`) and the `deny` and `ask` rules of `profiles/dev/settings.json` refer to them, and a renamed tool would escape them.
+The npm lock, from `tools/npm`, with the public registry:
+
+```bash
+npm install --package-lock-only --ignore-scripts --registry=https://registry.npmjs.org/ \
+  --before="$(date -u -d '14 days ago' +%Y-%m-%dT%H:%M:%SZ)"
+npm audit --package-lock-only --registry=https://registry.npmjs.org/
+```
+
+`--uploaded-prior-to=P14D` and `--before` apply the cooldown to every package of the lock, transitive ones included. Then the images are rebuilt and tested (see "MCP gateway", Setup). An update of `mcp-atlassian` or `mcp-devops-onpremise` also checks the names of their tools: the policies of the gateway (`broker/claude_gateway.py`) and the `deny` and `ask` rules of `profiles/dev/settings.json` refer to them, and a renamed tool would escape them.
+
+**Monthly rebuild.** The Ubuntu packages, `gh` and Git get their security updates only when their layers are built again. Once a month, and when an advisory concerns one of them, both images are rebuilt without cache:
+
+```bash
+docker build --pull --no-cache -t bfs-claude-agent ~/.agents/bfs-claude-agent
+claude_services_build --refresh
+```
+
+**Checks of the Dockerfiles.** Both Dockerfiles start with `# check=error=true`: a warning of the Docker build checks fails the build. The images are scanned for known vulnerabilities on the host before a merge that changes them (e.g. Docker Scout of Docker Desktop: `docker scout cves bfs-claude-agent`).
 
 ## Several agents at the same time
 
@@ -571,6 +602,11 @@ bfs-claude-agent/
   .dockerignore              (allow list of the build context of both Dockerfiles)
   entrypoint.sh
   launch.sh
+  .github/
+    dependabot.yml           (version updates of the images, see "Dependencies")
+  tools/
+    python/                  (yq/, semgrep/: locked Python tools of the agent image, see "Dependencies")
+    npm/                     (package.json, package-lock.json: npm tools of the agent image)
   services/
     Dockerfile               (images of the service containers, one target each, see "Service images")
     atlassian/               (requirements.in, requirements.txt: locked Python packages, see "Dependencies")

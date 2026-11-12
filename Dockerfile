@@ -1,10 +1,15 @@
+# check=error=true
+# Image of the agent. Supply chain (see README, "Dependencies"): the base images are pinned by tag and digest, the
+# Python and npm tools by version and hash (tools/), the binaries downloaded with curl by SHA-256, and the apt
+# packages come from signed repositories. A warning of the Docker build checks fails the build (check=error=true).
+
 # Node.js runtime, copied later instead of installed via apt to control the exact version.
-FROM node@sha256:a9f5f7c91a432850b2a8a7797adf5eadb6c733ceed61167806cee7ea7fbc29df AS node-source
+FROM node:24.19.0-bookworm-slim@sha256:a9f5f7c91a432850b2a8a7797adf5eadb6c733ceed61167806cee7ea7fbc29df AS node-source
 
 # Base image: .NET SDK, needed to build/test the backend (ASP.NET Core, PostgreSQL, Oracle).
 # The Ubuntu release (noble = 24.04) is pinned in the tag, so that it only changes on purpose
-# (the git PPA below also targets noble).
-FROM mcr.microsoft.com/dotnet/sdk:10.0-noble
+# (the git PPA below also targets noble); the digest pins the exact build, updated by Dependabot.
+FROM mcr.microsoft.com/dotnet/sdk:10.0-noble@sha256:fe0fd4e93bd2fbb47c883b7a6369e5c8d3db8bf01cdc5981f6ee35fbdf3ff4fb
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -24,17 +29,16 @@ RUN apt-get update \
         xxd \
         # Binary inspection tools (e.g. `strings`, to look for a name in a compiled assembly).
         binutils \
-        # Python runtime, required by pipx and other Python-based tools.
+        # Python runtime, used by the Python tools below and by the scripts of the agent.
         python3 \
-        # Python package installer, dependency of pipx.
-        python3-pip \
+        # Virtual environments (`python3 -m venv`): the Python tools of the image, and the environments of
+        # the agent (e.g. for the Git hooks of a repository).
+        python3-venv \
         # Excel (.xlsx) reading/writing from Python, used to inspect workbooks (e.g. ITAR_K
         # templates: defined names, hidden worksheets, cell values) without a .NET project.
         python3-openpyxl \
         # YAML reading from Python, used to process a rendered Helm manifest or a values file in a script.
         python3-yaml \
-        # Installs Python CLI applications in isolated virtual environments (see pipx installs below).
-        pipx \
         # Fast text search (`rg`), preferred default for plain-text search.
         ripgrep \
         # Fast file search (`fd`), installed as `fdfind` on Ubuntu, aliased below.
@@ -172,13 +176,23 @@ RUN sass_version=1.102.0 \
     && ln -s /opt/dart-sass/sass /usr/local/bin/sass \
     && rm /tmp/dart-sass.tgz
 
-ENV PIPX_HOME=/opt/pipx
-ENV PIPX_BIN_DIR=/usr/local/bin
-
-# YAML processor, used to read/patch single fields (e.g. Helm values-*.yaml) without a full rewrite.
-RUN pipx install yq==4.2.0
-# Pattern-based static analysis (C#, TypeScript, YAML), used by the code-review/security-review skills.
-RUN pipx install semgrep==1.177.0
+# Python tools, one virtual environment each, from a lock with the versions and hashes of every package, transitive
+# ones included (tools/python/<tool>/requirements.txt): wheels only, nothing outside the lock, pip removed afterwards.
+# yq: YAML processor (also xq, tomlq), used to read/patch single fields (e.g. Helm values-*.yaml) without a full
+# rewrite. semgrep: pattern-based static analysis (C#, TypeScript, YAML), used by the code-review/security-review skills;
+# its launcher runs pysemgrep from the PATH, so both are linked.
+COPY --chmod=0644 tools/python/yq/requirements.txt /tmp/requirements-yq.txt
+COPY --chmod=0644 tools/python/semgrep/requirements.txt /tmp/requirements-semgrep.txt
+RUN for tool in yq semgrep; do \
+        python3 -m venv "/opt/$tool" \
+        && "/opt/$tool/bin/pip" install --no-cache-dir --no-deps --require-hashes --only-binary=:all: \
+            -r "/tmp/requirements-$tool.txt" \
+        && "/opt/$tool/bin/pip" uninstall -y pip \
+        || exit 1; \
+    done \
+    && ln -s /opt/yq/bin/yq /opt/yq/bin/xq /opt/yq/bin/tomlq /opt/semgrep/bin/semgrep /opt/semgrep/bin/pysemgrep \
+        /usr/local/bin/ \
+    && rm /tmp/requirements-yq.txt /tmp/requirements-semgrep.txt
 
 # Bring in Node.js and npm from the official Node image instead of an apt-installed version.
 COPY --from=node-source /usr/local/bin/node /usr/local/bin/node
@@ -195,17 +209,20 @@ ENV NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/bit-proxy-ca.crt
 RUN npm install -g --prefix /opt/claude-code @anthropic-ai/claude-code \
     && chmod -R a+rwX /opt/claude-code
 ENV PATH=$PATH:/opt/claude-code/bin
-# Structural code search across C#/TypeScript, matches syntax rather than plain text.
-RUN npm install -g @ast-grep/cli@0.45.3
 # Browser cache of Puppeteer, outside /root: /root is replaced at run time by the mounted slot home,
 # which would hide the chrome-headless-shell downloaded below. Also read at run time to find it.
 ENV PUPPETEER_CACHE_DIR=/opt/puppeteer
-# Renders Mermaid diagram code to PNG/SVG/PDF (`mmdc`).
-RUN npm install -g @mermaid-js/mermaid-cli@11.17.0
-# JSON5 parser (`json5 <file>` prints plain JSON), used to read JSON files with comments and a BOM
-# (e.g. the backend appsettings.json) and pipe them to jq.
-RUN npm install -g json5@2.2.3
-# Global npm prefix at run time, after the global packages above: `npm install -g` and `npm update -g`, used by
+# npm tools, installed with npm ci from a lock with the version and integrity hash of every package
+# (tools/npm/package-lock.json):
+# - @ast-grep/cli (`ast-grep`, `sg`): structural code search across C#/TypeScript, matches syntax rather than text
+# - @mermaid-js/mermaid-cli (`mmdc`): renders Mermaid diagram code to PNG/SVG/PDF. Its install script downloads
+#   chrome-headless-shell (Puppeteer), so the install scripts run.
+# - json5: prints plain JSON from a JSON file with comments and a BOM (e.g. the backend appsettings.json), for jq
+COPY --chmod=0644 tools/npm/package.json tools/npm/package-lock.json /opt/agent-tools/
+RUN npm ci --prefix /opt/agent-tools --omit=dev --no-audit --no-fund \
+    && ln -s /opt/agent-tools/node_modules/.bin/ast-grep /opt/agent-tools/node_modules/.bin/sg \
+        /opt/agent-tools/node_modules/.bin/mmdc /opt/agent-tools/node_modules/.bin/json5 /usr/local/bin/
+# Global npm prefix at run time, after the installs above: `npm install -g` and `npm update -g`, used by
 # the self-update of Claude Code, write into /opt/claude-code instead of /usr/local.
 ENV NPM_CONFIG_PREFIX=/opt/claude-code
 

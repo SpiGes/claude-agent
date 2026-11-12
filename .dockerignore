@@ -12,3 +12,6 @@
 !broker/gh
 !broker/secrets.example
 !services/*/requirements.txt
+!tools/python/*/requirements.txt
+!tools/npm/package.json
+!tools/npm/package-lock.json
