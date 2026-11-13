@@ -481,10 +481,10 @@ Every input of the two images has an exact version; nothing floats at a rebuild:
 | Base images: `dotnet/sdk` and `node` (`Dockerfile`), `ubuntu` (`services/Dockerfile`) | Tag and digest (`image:tag@sha256:...`) | Dependabot |
 | Python packages: services (`services/<target>/`), `yq` and `semgrep` of the agent (`tools/python/<tool>/`) | Lock with the version and hashes of every package, transitive ones included (`requirements.txt`, generated with `pip-compile` from `requirements.in`, which names the direct packages only); installed from wheels only, nothing outside the lock | Dependabot, or by hand (below) |
 | npm tools of the agent: `@ast-grep/cli`, `@mermaid-js/mermaid-cli`, `json5` (`tools/npm/`) | `package-lock.json`, with the integrity hash of every package; installed with `npm ci` | Dependabot, or by hand (below) |
-| Binaries downloaded with `curl`: Helm, Dart Sass, Oracle Instant Client | Version and SHA-256 in the Dockerfile | By hand |
+| Binaries downloaded with `curl`: Helm, Dart Sass, Oracle Instant Client, `gh` (`.deb` of the GitHub release) | Version and SHA-256 in the Dockerfile | By hand |
 | `age` of the broker image: official release binary from GitHub (Go modules can't be downloaded from the corporate network) | Version and SHA-256 of the archive in `services/Dockerfile` (`ADD --checksum`) | By hand: Sigsum proof of the release (`.proof` file) and advisories of its Go version checked before the hash is changed |
 | .NET tools: `reportgenerator`, `ilspycmd` | Version in the Dockerfile (signed NuGet packages) | By hand |
-| Ubuntu packages, `gh`, Git (PPA) | Signed repositories, latest version at the build | Monthly rebuild (below) |
+| Ubuntu packages, Git (PPA) | Signed repositories, latest version at the build | Monthly rebuild (below) |
 | Claude Code | Latest version | Updates itself (see Installation details) |
 
 **Cooldown.** A new release is adopted once it's at least 14 days old: a compromised release is usually found and withdrawn within days. A release that fixes a security advisory is adopted at once, when it's published with an attestation of its origin (e.g. trusted publishing on PyPI) and no advisory concerns it; for a Python package, it's then pinned in the `requirements.in` of its lock, with the advisory it fixes. The release notes are read before a version is chosen.
@@ -512,7 +512,7 @@ npm audit --package-lock-only --registry=https://registry.npmjs.org/
 
 `--uploaded-prior-to=P14D` and `--before` apply the cooldown to every package of the lock, transitive ones included. Then the images are rebuilt and tested (see "MCP gateway", Setup). An update of `mcp-atlassian` or `mcp-devops-onpremise` also checks the names of their tools: the policies of the gateway (`broker/claude_gateway.py`) and the `deny` and `ask` rules of `profiles/dev/settings.json` refer to them, and a renamed tool would escape them.
 
-**Monthly rebuild.** The Ubuntu packages, `gh` and Git get their security updates only when their layers are built again. Once a month, and when an advisory concerns one of them, both images are rebuilt without cache (a new digest of a base image comes through Dependabot, and is pulled by the next build):
+**Monthly rebuild.** The Ubuntu packages and Git get their security updates only when their layers are built again. Once a month, and when an advisory concerns one of them, both images are rebuilt without cache (a new digest of a base image comes through Dependabot, and is pulled by the next build):
 
 ```bash
 claude_agent_build --refresh

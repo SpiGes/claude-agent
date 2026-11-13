@@ -4,7 +4,7 @@
 # packages come from signed repositories. A warning of the Docker build checks fails the build (check=error=true).
 
 # Node.js runtime, copied later instead of installed via apt to control the exact version.
-FROM node:24.19.0-bookworm-slim@sha256:a9f5f7c91a432850b2a8a7797adf5eadb6c733ceed61167806cee7ea7fbc29df AS node-source
+FROM node:24.22.3-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54 AS node-source
 
 # Base image: .NET SDK, needed to build/test the backend (ASP.NET Core, PostgreSQL, Oracle).
 # The Ubuntu release (noble = 24.04) is pinned in the tag, so that it only changes on purpose
@@ -106,20 +106,6 @@ COPY --chmod=0644 certs/nexus-ca.pem /usr/local/share/ca-certificates/nexus-ca.c
 COPY --chmod=0644 certs/swissgov-root.cer /usr/local/share/ca-certificates/swissgov-root.crt
 RUN update-ca-certificates
 
-# GitHub CLI (`gh`), used by the agent for GitHub API actions (issues, pull requests), authenticated
-# through GH_TOKEN (.env). Installed from GitHub's official apt repository, after the corporate CA
-# certificates above so the download works behind the proxy. Deliberately not wired into git
-# (no `gh auth setup-git`): git operations keep their own dedicated PAT (GIT_CONFIG_*).
-RUN mkdir -p -m 755 /etc/apt/keyrings \
-    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-        -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
-    && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-        > /etc/apt/sources.list.d/github-cli.list \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends gh \
-    && rm -rf /var/lib/apt/lists/*
-
 # Git, from the "Ubuntu Git Maintainers" PPA instead of the Ubuntu archive: Ubuntu 24.04 provides
 # git 2.43, while 2.48 or higher is needed to create worktrees with relative paths
 # (worktree.useRelativePaths, set below). With absolute paths, the worktrees can't be opened from
@@ -128,6 +114,7 @@ RUN mkdir -p -m 755 /etc/apt/keyrings \
 # The fingerprint is a public value, kept in a shell variable rather than an ARG, which the
 # Dockerfile linter would report as a secret (SecretsUsedInArgOrEnv).
 RUN fingerprint=E1DD270288B4E6030699E45FA1715D88E1DF1F24 \
+    && mkdir -p -m 755 /etc/apt/keyrings \
     && curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&options=mr&search=0x${fingerprint}" \
         | gpg --dearmor -o /etc/apt/keyrings/git-core-ppa.gpg \
     && gpg --show-keys --with-colons /etc/apt/keyrings/git-core-ppa.gpg \
@@ -139,6 +126,18 @@ RUN fingerprint=E1DD270288B4E6030699E45FA1715D88E1DF1F24 \
     && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/* \
     && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' git)" ge "1:2.48"
+
+# GitHub CLI (`gh`), used by the agent for GitHub API actions (issues, pull requests), authenticated
+# through GH_TOKEN (.env). The .deb package of the GitHub release, checked against its published SHA-256
+# and updated by hand (README, "Dependencies"): the apt repository of GitHub keeps the latest version only,
+# so a version can't be pinned there. Installed after Git, which it depends on. Deliberately not wired
+# into git (no `gh auth setup-git`): git operations keep their own dedicated PAT (GIT_CONFIG_*).
+RUN gh_version=2.103.3 \
+    && gh_sha256=e3bafef96328d1a67de3a968bdfe1cc2ffd58cf6aba8b5e201356897ed06bb3d \
+    && curl -fsSL -o /tmp/gh.deb "https://github.com/cli/cli/releases/download/v${gh_version}/gh_${gh_version}_linux_amd64.deb" \
+    && echo "${gh_sha256}  /tmp/gh.deb" | sha256sum -c - \
+    && apt-get install -y --no-install-recommends /tmp/gh.deb \
+    && rm /tmp/gh.deb
 
 # Code coverage report generator (`reportgenerator`), turns the coverlet output of the backend
 # tests into a readable report per file.
@@ -155,8 +154,8 @@ RUN dotnet tool install ilspycmd --version 11.1.0.9782 --tool-path /opt/dotnet-t
 # (values-<env>.yaml), to check a change before it's pushed. Only the client binary is used: no
 # cluster access is configured. The archive is checked against its published SHA-256, kept in a
 # shell variable for the same linter reason as the git PPA fingerprint below.
-RUN helm_version=v3.22.0 \
-    && helm_sha256=1e4ab49e429626cf6c6958d914248b78c9730803c2751b87627e171dc800e7bb \
+RUN helm_version=v3.22.1 \
+    && helm_sha256=896cf63684a42a723d61c980369d6e588330927deb13676ca0d85006dd6da0ea \
     && curl -fsSL -o /tmp/helm.tgz "https://get.helm.sh/helm-${helm_version}-linux-amd64.tar.gz" \
     && echo "${helm_sha256}  /tmp/helm.tgz" | sha256sum -c - \
     && tar -xzf /tmp/helm.tgz -C /tmp linux-amd64/helm \
