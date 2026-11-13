@@ -1,0 +1,11 @@
+{
+  "name": "bfs-claude-agent-tools",
+  "private": true,
+  "description": "Command-line tools of the agent image, installed with npm ci from package-lock.json (see README, \"Dependencies\").",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@ast-grep/cli": "0.45.3",
+    "@mermaid-js/mermaid-cli": "11.17.0",
+    "json5": "2.2.3"
+  }
+}

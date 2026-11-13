@@ -1,0 +1,2 @@
+# Pattern-based static analysis of the agent image (semgrep), used by the code-review and security-review skills.
+semgrep==1.182.1

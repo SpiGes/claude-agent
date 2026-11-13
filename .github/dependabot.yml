@@ -1,0 +1,40 @@
+# Version updates of the images (see README, "Dependencies"): every version is pinned, Dependabot proposes the new
+# ones in pull requests. A new release is only proposed once it's 14 days old (cooldown); the security updates of
+# Dependabot aren't delayed. Not covered, updated by hand: the binaries downloaded with curl (Helm, Dart Sass, Oracle
+# Instant Client), the .NET tools (reportgenerator, ilspycmd), and the development tools (requirements-dev.txt,
+# .pre-commit-config.yaml).
+version: 2
+updates:
+  # Base images of Dockerfile (dotnet/sdk, node) and services/Dockerfile (ubuntu): digests and tags.
+  - package-ecosystem: docker
+    directories:
+      - "/"
+      - "/services"
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    open-pull-requests-limit: 5
+
+  # Python packages locked with pip-compile (requirements.in -> requirements.txt with hashes).
+  - package-ecosystem: pip
+    directories:
+      - "/services/atlassian"
+      - "/services/devops"
+      - "/services/oracle"
+      - "/tools/python/semgrep"
+      - "/tools/python/yq"
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    open-pull-requests-limit: 5
+
+  # npm tools of the agent image (package-lock.json).
+  - package-ecosystem: npm
+    directory: "/tools/npm"
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    open-pull-requests-limit: 5

@@ -43,6 +43,10 @@ export AGENT_MCP_CONFLUENCE_DIR="${AGENT_MCP_CONFLUENCE_DIR:-$SHARED_BASE_DIR/mc
 # the server and downloads from it.
 export AGENT_SAS_KNOWN_HOSTS_FILE="${AGENT_SAS_KNOWN_HOSTS_FILE:-$AGENT_HOMES_DIR/sas-known-hosts}"
 export AGENT_MCP_SAS_DIR="${AGENT_MCP_SAS_DIR:-$SHARED_BASE_DIR/mcp-sas}"
+# Images of the service containers (see README, "Service images"): one tag per build target of services/Dockerfile,
+# built by claude_services_build.
+export AGENT_SERVICES_IMAGE="${AGENT_SERVICES_IMAGE:-bfs-claude-services}"
+_CLAUDE_SERVICE_TARGETS="base broker sas oracle atlassian devops"
 
 # Name that starts each notification of an agent: the name of its workspace folder, or of the folder
 # above it when the workspace is a "branch" folder (e.g. backend/branch gives "backend"). AGENT_NOTIFY_NAME
@@ -258,10 +262,12 @@ claude_broker(){
         echo "No secrets file ($AGENT_VAULT_DIR/secrets.age): create it with claude_secret edit." >&2
         return 1
     fi
+    local image
+    image="$(_claude_service_image broker)" || return
     _claude_network || return
     # A broker started from an older image (the image was rebuilt since) is replaced, so that it runs the
     # current code; its secrets are forgotten and the passphrase is asked again.
-    if _claude_broker_running && [ "$(docker inspect -f '{{.Image}}' claude-broker)" != "$(docker image inspect -f '{{.Id}}' bfs-claude-agent)" ]; then
+    if _claude_outdated claude-broker "$image"; then
         echo "The image was rebuilt: the secret broker is restarted on the new image."
         docker stop claude-broker >/dev/null
     fi
@@ -284,7 +290,7 @@ claude_broker(){
           -v "$AGENT_VAULT_DIR:/vault:ro" \
           -v "$AGENT_BROKER_LOG_DIR:/log" \
           --entrypoint claude-broker \
-          bfs-claude-agent serve >/dev/null || return
+          "$image" serve >/dev/null || return
         # Waits for the service: `ctl unlocked` exits with 3 until it's ready.
         local i
         for i in 1 2 3 4 5 6 7 8 9 10; do
@@ -329,10 +335,78 @@ _claude_running(){
     [ "$(docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null)" = "true" ]
 }
 
-# True when the container runs an image older than the current bfs-claude-agent (the image was rebuilt since).
+# True when the container runs another image than the current one of its target (the image was rebuilt since).
+#   _claude_outdated <container> <image>
 _claude_outdated(){
     _claude_running "$1" \
-      && [ "$(docker inspect -f '{{.Image}}' "$1")" != "$(docker image inspect -f '{{.Id}}' bfs-claude-agent)" ]
+      && [ "$(docker inspect -f '{{.Image}}' "$1")" != "$(docker image inspect -f '{{.Id}}' "$2")" ]
+}
+
+# Prints the image of a build target of services/Dockerfile, or fails with the command to build it: docker run would
+# otherwise look for an image of that name on Docker Hub.
+_claude_service_image(){
+    local image="$AGENT_SERVICES_IMAGE:$1"
+    if ! docker image inspect "$image" >/dev/null 2>&1; then
+        echo "Image $image not found: build the service images with claude_services_build." >&2
+        return 1
+    fi
+    echo "$image"
+}
+
+# Pulls the base images named by the FROM lines of a Dockerfile (stages of the same file excepted), with docker pull.
+# The build then finds them locally by their digest: BuildKit doesn't reach Docker Hub from the corporate network,
+# while the Docker engine does. Images already present aren't downloaded again.
+_claude_pull_bases(){
+    local dockerfile="$1" image
+    local -a images
+    mapfile -t images < <(awk '
+        toupper($1) == "FROM" {
+            ref = ($2 ~ /^--/) ? $3 : $2
+            if (!(ref in stage)) print ref
+            for (i = 1; i < NF; i++) if (toupper($i) == "AS") stage[$(i + 1)] = 1
+        }' "$dockerfile" | sort -u)
+    for image in "${images[@]}"; do
+        docker pull --quiet "$image" >/dev/null || { echo "Base image $image can't be pulled." >&2; return 1; }
+    done
+}
+
+# Builds the image of the agent (see README, "Installation", Step 2), from this repository: its base images are pulled
+# first (_claude_pull_bases). With --refresh, every layer is built again (--no-cache), so that the packages of Ubuntu,
+# gh and Git get their latest security updates; the versions pinned in the repository don't change. Agents started
+# afterwards run the new image.
+claude_agent_build(){
+    local -a refresh=()
+    case "${1:-}" in
+        "") ;;
+        --refresh) refresh=(--no-cache) ;;
+        *) echo "Usage: claude_agent_build [--refresh]" >&2; return 2 ;;
+    esac
+    _claude_pull_bases "$AGENT_BASE_DIR/Dockerfile" || return
+    docker build "${refresh[@]}" -t bfs-claude-agent "$AGENT_BASE_DIR"
+}
+
+# Builds the images of the service containers (see README, "Service images"), one per target of services/Dockerfile,
+# from this repository, after pulling its base image (_claude_pull_bases). With --refresh, every layer is built again
+# (--no-cache), as for claude_agent_build. The containers running an older image are restarted by claude_broker,
+# claude_gateway and claude_mcp start.
+claude_services_build(){
+    local -a refresh=()
+    case "${1:-}" in
+        "") ;;
+        --refresh) refresh=(--no-cache) ;;
+        *) echo "Usage: claude_services_build [--refresh]" >&2; return 2 ;;
+    esac
+    _claude_pull_bases "$AGENT_BASE_DIR/services/Dockerfile" || return
+    local revision target
+    revision="$(git -C "$AGENT_BASE_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
+    for target in $_CLAUDE_SERVICE_TARGETS; do
+        echo "--- $AGENT_SERVICES_IMAGE:$target"
+        docker build "${refresh[@]}" -f "$AGENT_BASE_DIR/services/Dockerfile" --target "$target" \
+          --build-arg VCS_REF="$revision" -t "$AGENT_SERVICES_IMAGE:$target" "$AGENT_BASE_DIR" || return
+        # --no-cache only applies to the first build: every target shares its first stage, so the next targets
+        # are built on the new layers anyway.
+        refresh=()
+    done
 }
 
 _claude_gateway_ctl(){
@@ -355,8 +429,10 @@ _claude_gateway_routes(){
 # from an older image, or with other routes (e.g. a server added to launch.sh), is restarted. It doesn't start the MCP
 # containers (claude_mcp), nor is it started by claude_dev.
 claude_gateway(){
+    local image
+    image="$(_claude_service_image base)" || return
     _claude_network || return
-    if _claude_outdated claude-gateway; then
+    if _claude_outdated claude-gateway "$image"; then
         echo "The image was rebuilt: the MCP gateway is restarted on the new image."
         docker stop claude-gateway >/dev/null
     elif _claude_running claude-gateway \
@@ -388,7 +464,7 @@ claude_gateway(){
       "${notify_args[@]}" \
       -v "$AGENT_GATEWAY_LOG_DIR:/log" \
       --entrypoint claude-gateway \
-      bfs-claude-agent serve >/dev/null || return
+      "$image" serve >/dev/null || return
     local network
     for network in $(docker network ls --filter label=bfs-claude-agent.role=mcp-network --format '{{.Name}}'); do
         _claude_gateway_join "$network" || return
@@ -469,6 +545,18 @@ _claude_mcp_spec(){
     esac
 }
 
+# Build target of services/Dockerfile that runs an MCP server.
+_claude_mcp_image(){
+    case "$1" in
+        devops) echo devops ;;
+        jira|confluence) echo atlassian ;;
+        keycloak) echo base ;;
+        sas) echo sas ;;
+        oracle) echo oracle ;;
+        *) echo "Unknown MCP server '$1' (servers: $AGENT_MCP_SERVERS)." >&2; return 1 ;;
+    esac
+}
+
 # Starts, stops, or restarts the container of an MCP server (see README, "MCP gateway"):
 #   claude_mcp start|stop|restart <server>   (servers: devops, jira, confluence, keycloak, sas, oracle)
 # The container starts without its secrets, on the network of the server, shared with the gateway only (connected to
@@ -485,8 +573,12 @@ claude_mcp(){
     local -a spec
     mapfile -t spec < <(_claude_mcp_spec "$name") || return
     [ "${#spec[@]}" -ge 3 ] || return 1
-    local container="claude-mcp-$name"
-    if [ "$action" != start ] || _claude_outdated "$container"; then
+    local container="claude-mcp-$name" image=""
+    # A stop doesn't need the image: a server is stopped even when its image was removed.
+    if [ "$action" != stop ]; then
+        image="$(_claude_service_image "$(_claude_mcp_image "$name")")" || return
+    fi
+    if [ "$action" != start ] || _claude_outdated "$container" "$image"; then
         if docker stop "$container" >/dev/null 2>&1; then
             docker rm "$container" >/dev/null 2>&1
             echo "MCP server $name stopped."
@@ -540,7 +632,7 @@ claude_mcp(){
       -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 \
       -e MCP_COMMAND="${spec[0]}" "${spec[@]:3}" \
       --entrypoint sh \
-      bfs-claude-agent -c "$start_script" >/dev/null || return
+      "$image" -c "$start_script" >/dev/null || return
     if _claude_running claude-gateway; then
         _claude_gateway_join "$network" || return
     fi
@@ -680,7 +772,8 @@ _claude_secret_edit(){
     fi
     # The container only sleeps; each step runs in it with docker exec. It ends by itself after 30 minutes, so that the
     # clear text of its tmpfs doesn't outlive an interrupted edit, and it's removed at the end of the edit.
-    local container="claude-secret-edit-$$" rc=0
+    local container="claude-secret-edit-$$" rc=0 image
+    image="$(_claude_service_image broker)" || return
     docker run -d --rm --name "$container" --network none \
       --user $(id -u):$(id -g) \
       --cap-drop ALL --security-opt no-new-privileges \
@@ -688,7 +781,7 @@ _claude_secret_edit(){
       -e HOME=/tmp \
       -v "$AGENT_VAULT_DIR:/vault" \
       --entrypoint sleep \
-      bfs-claude-agent 1800 >/dev/null || return
+      "$image" 1800 >/dev/null || return
     (
         trap 'docker stop -t 0 "$container" >/dev/null 2>&1' EXIT
         _claude_secret_edit_steps "$container" "$passphrase"
