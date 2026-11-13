@@ -87,20 +87,15 @@ RUN url=https://download.oracle.com/otn_software/linux/instantclient/2326400/ins
     && mv /opt/oracle/instantclient_* /opt/oracle/instantclient \
     && rm /tmp/instantclient.zip
 
-# --- Build stage of age (secrets file of the broker), compiled from its sources instead of taken from Ubuntu: the ---
-# --- age of Ubuntu 24.04 is built with Go 1.22, whose standard library has known vulnerabilities. The Go image is ---
-# --- pinned by tag and digest (Dependabot); go install checks the module against the Go checksum database ---
-# --- (sum.golang.org). Go 1.27.4 is a security release, adopted before the cooldown of 14 days. A static binary, ---
-# --- without cgo; the version of age is updated by hand (README, "Dependencies"). ---
-FROM golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS age-builder
-COPY --chmod=0644 certs/bit-proxy-ca.pem /usr/local/share/ca-certificates/bit-proxy-ca.crt
-COPY --chmod=0644 certs/nexus-ca.pem /usr/local/share/ca-certificates/nexus-ca.crt
-COPY --chmod=0644 certs/swissgov-root.cer /usr/local/share/ca-certificates/swissgov-root.crt
-RUN update-ca-certificates
-ENV CGO_ENABLED=0 \
-    GOFLAGS=-trimpath \
-    GOTOOLCHAIN=local
-RUN go install filippo.io/age/cmd/age@v1.3.2
+# --- age (secrets file of the broker): the official release binary instead of the Ubuntu package, whose binary ---
+# --- is built with Go 1.22 and its vulnerable standard library. BuildKit downloads the archive and checks its ---
+# --- SHA-256 (the build fails on a mismatch); age isn't compiled here, since Go modules can't be downloaded from ---
+# --- the corporate network. A new version is checked by hand before its hash is changed: Sigsum proof of the ---
+# --- release (.proof file) and advisories of the Go version it's built with (README, "Dependencies"). ---
+FROM os AS age-release
+ADD --checksum=sha256:cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10 \
+    https://github.com/FiloSottile/age/releases/download/v1.3.2/age-v1.3.2-linux-amd64.tar.gz /tmp/age.tar.gz
+RUN tar -xzf /tmp/age.tar.gz -C /tmp age/age age/LICENSE
 
 # --- base: the MCP gateway and the Keycloak MCP server; the other targets add to it. ---
 FROM os AS base
@@ -133,16 +128,17 @@ RUN for command in agent-notify claude-broker claude-gateway age-passphrase clau
     done \
     && test -r /opt/claude-agent/broker/access.py && test -r /opt/claude-agent/broker/mcp_server.py
 
-# --- broker: the secret broker and the container of claude_secret edit. age encrypts the secrets file with a ---
-# --- passphrase (no plugin), from the age-builder stage; nano edits it in the disposable container. ---
+# --- broker: the secret broker and the container of claude_secret edit. age (age-release stage) encrypts the ---
+# --- secrets file with a passphrase (no plugin); nano edits it in the disposable container. ---
 FROM base AS broker
 USER root
 ARG DEBIAN_FRONTEND=noninteractive
-COPY --from=age-builder --chmod=0755 /go/bin/age /usr/local/bin/age
 RUN apt-get update \
     && apt-get install -y --no-install-recommends nano \
     && rm -rf /var/lib/apt/lists/* \
-    && install -d -m 0755 /usr/local/share/claude-broker
+    && install -d -m 0755 /usr/local/share/claude-broker /usr/local/share/doc/age
+COPY --from=age-release --chmod=0755 /tmp/age/age /usr/local/bin/age
+COPY --from=age-release --chmod=0644 /tmp/age/LICENSE /usr/local/share/doc/age/LICENSE
 COPY --chmod=0644 broker/secrets.example /usr/local/share/claude-broker/secrets.example
 USER service
 RUN age --version >/dev/null && test -r /usr/local/share/claude-broker/secrets.example

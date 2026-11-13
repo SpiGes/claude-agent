@@ -455,7 +455,7 @@ The secret broker, the MCP gateway and the MCP servers run from images of their 
 | Image (`bfs-claude-services:<target>`) | Content | Containers |
 |---|---|---|
 | `base` | Python 3.12 of Ubuntu 24.04, BIT certificates, modules of `broker/`, `agent-notify` | `claude-gateway`, `claude-mcp-keycloak` |
-| `broker` | `base` + `age` (compiled from its sources with a current Go), `nano` | `claude-broker`, the container of `claude_secret edit` |
+| `broker` | `base` + `age` (official release binary), `nano` | `claude-broker`, the container of `claude_secret edit` |
 | `sas` | `base` + OpenSSH client | `claude-mcp-sas` |
 | `oracle` | `base` + Oracle Instant Client, `oracledb` | `claude-mcp-oracle` |
 | `atlassian` | `base` + `mcp-atlassian` | `claude-mcp-jira`, `claude-mcp-confluence` |
@@ -482,7 +482,7 @@ Every input of the two images has an exact version; nothing floats at a rebuild:
 | Python packages: services (`services/<target>/`), `yq` and `semgrep` of the agent (`tools/python/<tool>/`) | Lock with the version and hashes of every package, transitive ones included (`requirements.txt`, generated with `pip-compile` from `requirements.in`, which names the direct packages only); installed from wheels only, nothing outside the lock | Dependabot, or by hand (below) |
 | npm tools of the agent: `@ast-grep/cli`, `@mermaid-js/mermaid-cli`, `json5` (`tools/npm/`) | `package-lock.json`, with the integrity hash of every package; installed with `npm ci` | Dependabot, or by hand (below) |
 | Binaries downloaded with `curl`: Helm, Dart Sass, Oracle Instant Client | Version and SHA-256 in the Dockerfile | By hand |
-| `age` of the broker image: compiled in a build stage (`golang` image, pinned by tag and digest) | Version in `services/Dockerfile`, module checked against the Go checksum database | Go image: Dependabot; version of `age`: by hand |
+| `age` of the broker image: official release binary from GitHub (Go modules can't be downloaded from the corporate network) | Version and SHA-256 of the archive in `services/Dockerfile` (`ADD --checksum`) | By hand: Sigsum proof of the release (`.proof` file) and advisories of its Go version checked before the hash is changed |
 | .NET tools: `reportgenerator`, `ilspycmd` | Version in the Dockerfile (signed NuGet packages) | By hand |
 | Ubuntu packages, `gh`, Git (PPA) | Signed repositories, latest version at the build | Monthly rebuild (below) |
 | Claude Code | Latest version | Updates itself (see Installation details) |
