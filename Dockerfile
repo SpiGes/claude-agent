@@ -18,7 +18,7 @@ ARG DART_SASS_VERSION=1.102.0
 ARG DART_SASS_SHA256=2a2ce6036f94534b39356252b1a3d4aa7879ab139c73bf62f7c9b5beafcfc367
 
 # Node.js runtime, copied later instead of installed via apt to control the exact version.
-FROM node:24.22.3-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54 AS node-source
+FROM node:26.12.1-bookworm-slim@sha256:88e480776c6149ff1d098cd304f44bf18057fb5d284a3329b78162d29821e28c AS node-source
 
 # Base image: .NET SDK, needed to build/test the backend (ASP.NET Core, PostgreSQL, Oracle).
 # The Ubuntu release (noble = 24.04) is pinned in the tag, so that it only changes on purpose
