@@ -1,0 +1,2 @@
+# YAML processor of the agent image (yq), e.g. to read or patch one field of a Helm values file.
+yq==4.2.0

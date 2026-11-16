@@ -3,7 +3,11 @@ bandit==1.9.4
 black==26.10.1
 coverage==7.16.2
 mypy==2.4.0
-# Types of the Oracle MCP server, for mypy and pyright (same version as broker/oracle-requirements.txt).
+# Advisories of the locked Python packages (see README, "Dependencies").
+pip-audit==2.10.1
+# Locks of the Python packages of the service images (see README, "Dependencies").
+pip-tools==7.6.2
+# Types of the Oracle MCP server, for mypy and pyright (same version as services/oracle/requirements.txt).
 oracledb==26.0.1
 pre-commit==4.7.0
 pyright==1.1.414

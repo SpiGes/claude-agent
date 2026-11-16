@@ -1,0 +1,6 @@
+# MCP server of Jira and Confluence (containers claude-mcp-jira and claude-mcp-confluence).
+mcp-atlassian==0.23.1
+
+# Security releases adopted before the cooldown of 14 days (see README, "Dependencies"):
+# oauthlib 4.0.1 fixes GHSA-3jp2-3mrg-2vxc (CVE-2026-49272, high) of 4.0.0; trusted publishing attested on PyPI.
+oauthlib==4.0.1

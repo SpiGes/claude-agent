@@ -1,0 +1,2 @@
+# Oracle MCP server (container claude-mcp-oracle): oracledb in thick mode, on the Instant Client of the image.
+oracledb==26.0.1

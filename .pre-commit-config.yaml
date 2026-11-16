@@ -19,7 +19,7 @@ repos:
         name: mypy
         entry: mypy
         language: python
-        # oracledb: the types of the Oracle MCP server (broker/oracle-requirements.txt).
+        # oracledb: the types of the Oracle MCP server (services/oracle/requirements.txt).
         additional_dependencies: [mypy==2.4.0, oracledb==26.0.1]
         files: ^((broker|tests)/.*\.py|pyproject\.toml)$
         pass_filenames: false
