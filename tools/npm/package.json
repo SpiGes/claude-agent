@@ -5,7 +5,7 @@
   "license": "UNLICENSED",
   "dependencies": {
     "@ast-grep/cli": "0.51.1",
-    "@mermaid-js/mermaid-cli": "11.17.0",
+    "@mermaid-js/mermaid-cli": "12.2.0",
     "json5": "2.2.3"
   }
 }
