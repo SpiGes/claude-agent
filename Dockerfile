@@ -4,6 +4,19 @@
 # packages come from signed repositories, in their latest version at the build. A warning of the Docker build
 # checks fails the build (check=error=true).
 
+# Versions of the tools installed by version, with the SHA-256 published for each download, updated by hand
+# (README, "Dependencies"). They're redeclared (ARG without value) in the stage, just before the instruction that
+# uses them. The base images stay written in full in their FROM lines, which Dependabot updates.
+ARG GIT_PPA_FINGERPRINT=E1DD270288B4E6030699E45FA1715D88E1DF1F24
+ARG GH_VERSION=2.103.3
+ARG GH_SHA256=e3bafef96328d1a67de3a968bdfe1cc2ffd58cf6aba8b5e201356897ed06bb3d
+ARG REPORTGENERATOR_VERSION=5.5.11
+ARG ILSPYCMD_VERSION=11.1.0.9782
+ARG HELM_VERSION=v3.22.1
+ARG HELM_SHA256=896cf63684a42a723d61c980369d6e588330927deb13676ca0d85006dd6da0ea
+ARG DART_SASS_VERSION=1.102.0
+ARG DART_SASS_SHA256=2a2ce6036f94534b39356252b1a3d4aa7879ab139c73bf62f7c9b5beafcfc367
+
 # Node.js runtime, copied later instead of installed via apt to control the exact version.
 FROM node:24.22.3-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54 AS node-source
 
@@ -112,14 +125,12 @@ RUN update-ca-certificates
 # (worktree.useRelativePaths, set below). With absolute paths, the worktrees can't be opened from
 # the host (e.g. in VSCode), since the container paths don't exist there. The PPA signing key is
 # checked against its fingerprint; the build fails if the installed git is older than 2.48.
-# The fingerprint is a public value, kept in a shell variable rather than an ARG, which the
-# Dockerfile linter would report as a secret (SecretsUsedInArgOrEnv).
-RUN fingerprint=E1DD270288B4E6030699E45FA1715D88E1DF1F24 \
-    && mkdir -p -m 755 /etc/apt/keyrings \
-    && curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&options=mr&search=0x${fingerprint}" \
+ARG GIT_PPA_FINGERPRINT
+RUN mkdir -p -m 755 /etc/apt/keyrings \
+    && curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&options=mr&search=0x${GIT_PPA_FINGERPRINT}" \
         | gpg --dearmor -o /etc/apt/keyrings/git-core-ppa.gpg \
     && gpg --show-keys --with-colons /etc/apt/keyrings/git-core-ppa.gpg \
-        | grep -q "^fpr:::::::::${fingerprint}:" \
+        | grep -q "^fpr:::::::::${GIT_PPA_FINGERPRINT}:" \
     && chmod go+r /etc/apt/keyrings/git-core-ppa.gpg \
     && echo "deb [signed-by=/etc/apt/keyrings/git-core-ppa.gpg] https://ppa.launchpadcontent.net/git-core/ppa/ubuntu noble main" \
         > /etc/apt/sources.list.d/git-core-ppa.list \
@@ -133,32 +144,31 @@ RUN fingerprint=E1DD270288B4E6030699E45FA1715D88E1DF1F24 \
 # and updated by hand (README, "Dependencies"): the apt repository of GitHub keeps the latest version only,
 # so a version can't be pinned there. Installed after Git, which it depends on. Deliberately not wired
 # into git (no `gh auth setup-git`): git operations keep their own dedicated PAT (GIT_CONFIG_*).
-RUN gh_version=2.103.3 \
-    && gh_sha256=e3bafef96328d1a67de3a968bdfe1cc2ffd58cf6aba8b5e201356897ed06bb3d \
-    && curl -fsSL -o /tmp/gh.deb "https://github.com/cli/cli/releases/download/v${gh_version}/gh_${gh_version}_linux_amd64.deb" \
-    && echo "${gh_sha256}  /tmp/gh.deb" | sha256sum -c - \
+ARG GH_VERSION GH_SHA256
+RUN curl -fsSL -o /tmp/gh.deb "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.deb" \
+    && echo "${GH_SHA256}  /tmp/gh.deb" | sha256sum -c - \
     && apt-get install -y --no-install-recommends /tmp/gh.deb \
     && rm /tmp/gh.deb
 
 # Code coverage report generator (`reportgenerator`), turns the coverlet output of the backend
 # tests into a readable report per file.
-RUN dotnet tool install dotnet-reportgenerator-globaltool --version 5.5.11 --tool-path /opt/dotnet-tools \
+ARG REPORTGENERATOR_VERSION
+RUN dotnet tool install dotnet-reportgenerator-globaltool --version "${REPORTGENERATOR_VERSION}" --tool-path /opt/dotnet-tools \
     && ln -s /opt/dotnet-tools/reportgenerator /usr/local/bin/reportgenerator
 
 # .NET decompiler (`ilspycmd`), used to read the code of a NuGet package (e.g.
 # `ilspycmd -t <Namespace.Type> ~/.nuget/packages/<package>/<version>/lib/<tfm>/<assembly>.dll`) when the
 # behaviour of a library must be checked rather than assumed.
-RUN dotnet tool install ilspycmd --version 11.1.0.9782 --tool-path /opt/dotnet-tools \
+ARG ILSPYCMD_VERSION
+RUN dotnet tool install ilspycmd --version "${ILSPYCMD_VERSION}" --tool-path /opt/dotnet-tools \
     && ln -s /opt/dotnet-tools/ilspycmd /usr/local/bin/ilspycmd
 
 # Helm (`helm template`), renders the charts of the gitops repository per environment
 # (values-<env>.yaml), to check a change before it's pushed. Only the client binary is used: no
-# cluster access is configured. The archive is checked against its published SHA-256, kept in a
-# shell variable for the same linter reason as the git PPA fingerprint below.
-RUN helm_version=v3.22.1 \
-    && helm_sha256=896cf63684a42a723d61c980369d6e588330927deb13676ca0d85006dd6da0ea \
-    && curl -fsSL -o /tmp/helm.tgz "https://get.helm.sh/helm-${helm_version}-linux-amd64.tar.gz" \
-    && echo "${helm_sha256}  /tmp/helm.tgz" | sha256sum -c - \
+# cluster access is configured. The archive is checked against its published SHA-256.
+ARG HELM_VERSION HELM_SHA256
+RUN curl -fsSL -o /tmp/helm.tgz "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" \
+    && echo "${HELM_SHA256}  /tmp/helm.tgz" | sha256sum -c - \
     && tar -xzf /tmp/helm.tgz -C /tmp linux-amd64/helm \
     && install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm \
     && rm -rf /tmp/helm.tgz /tmp/linux-amd64
@@ -167,11 +177,10 @@ RUN helm_version=v3.22.1 \
 # handbooks), to check a site build before it's pushed. Hugo itself isn't installed: each site
 # brings its own version through the npm package `hugo-extended`. The version follows the
 # `dart_sass` entry of `tool-versions.json` in the SpiGes handbook. The archive is checked
-# against its published SHA-256, kept in a shell variable as for Helm above.
-RUN sass_version=1.102.0 \
-    && sass_sha256=2a2ce6036f94534b39356252b1a3d4aa7879ab139c73bf62f7c9b5beafcfc367 \
-    && curl -fsSL -o /tmp/dart-sass.tgz "https://github.com/sass/dart-sass/releases/download/${sass_version}/dart-sass-${sass_version}-linux-x64.tar.gz" \
-    && echo "${sass_sha256}  /tmp/dart-sass.tgz" | sha256sum -c - \
+# against its published SHA-256.
+ARG DART_SASS_VERSION DART_SASS_SHA256
+RUN curl -fsSL -o /tmp/dart-sass.tgz "https://github.com/sass/dart-sass/releases/download/${DART_SASS_VERSION}/dart-sass-${DART_SASS_VERSION}-linux-x64.tar.gz" \
+    && echo "${DART_SASS_SHA256}  /tmp/dart-sass.tgz" | sha256sum -c - \
     && tar -xzf /tmp/dart-sass.tgz -C /opt \
     && ln -s /opt/dart-sass/sass /usr/local/bin/sass \
     && rm /tmp/dart-sass.tgz

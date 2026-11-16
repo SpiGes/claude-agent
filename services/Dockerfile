@@ -18,6 +18,14 @@
 # through Dependabot (.github/dependabot.yml) or by hand, as described in the README ("Dependencies").
 # No secret enters the image: the secrets are handed to the running containers by the secret broker.
 
+# Versions of the downloads, with their published SHA-256, updated by hand (README, "Dependencies"). They're
+# redeclared (ARG without value) in the stage that uses them. The base image stays written in full in its FROM line,
+# which Dependabot updates.
+ARG INSTANTCLIENT_URL=https://download.oracle.com/otn_software/linux/instantclient/2326400/instantclient-basiclite-linux.x64-23.26.4.0.0.zip
+ARG INSTANTCLIENT_SHA256=d049e593bba0041feb15c14ea894e2f1a437377462b99d9bdb6b7ab30b2dd660
+ARG AGE_VERSION=v1.3.2
+ARG AGE_SHA256=cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10
+
 # --- Common layer of every service: Python of the distribution, BIT certificates, unprivileged user. Ubuntu 24.04, ---
 # --- the distribution of the agent image: same packages (e.g. libaio1t64), same Python, same handling of the BIT ---
 # --- certificates. Written in full in FROM (no ARG), so that Dependabot updates its digest. ---
@@ -72,17 +80,15 @@ RUN python3 -m venv /opt/mcp-devops-onpremise \
 
 # --- Download stage of Oracle Instant Client (Basic Light): curl and unzip stay out of the oracle target. Official ---
 # --- download of Oracle, checked against its SHA-256 (published on the download page); free to use and to ---
-# --- redistribute under the Oracle Free Use Terms and Conditions. The values are public: they're kept in shell ---
-# --- variables rather than ARGs, which the Dockerfile checks would report as secrets (SecretsUsedInArgOrEnv). ---
+# --- redistribute under the Oracle Free Use Terms and Conditions. ---
 FROM os AS instantclient
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl unzip \
     && rm -rf /var/lib/apt/lists/*
-RUN url=https://download.oracle.com/otn_software/linux/instantclient/2326400/instantclient-basiclite-linux.x64-23.26.4.0.0.zip \
-    && sha256=d049e593bba0041feb15c14ea894e2f1a437377462b99d9bdb6b7ab30b2dd660 \
-    && curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/instantclient.zip "$url" \
-    && echo "${sha256}  /tmp/instantclient.zip" | sha256sum -c - \
+ARG INSTANTCLIENT_URL INSTANTCLIENT_SHA256
+RUN curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/instantclient.zip "${INSTANTCLIENT_URL}" \
+    && echo "${INSTANTCLIENT_SHA256}  /tmp/instantclient.zip" | sha256sum -c - \
     && mkdir -p /opt/oracle \
     && unzip -q /tmp/instantclient.zip -d /opt/oracle \
     && mv /opt/oracle/instantclient_* /opt/oracle/instantclient \
@@ -94,8 +100,9 @@ RUN url=https://download.oracle.com/otn_software/linux/instantclient/2326400/ins
 # --- the corporate network. A new version is checked by hand before its hash is changed: Sigsum proof of the ---
 # --- release (.proof file) and advisories of the Go version it's built with (README, "Dependencies"). ---
 FROM os AS age-release
-ADD --checksum=sha256:cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10 \
-    https://github.com/FiloSottile/age/releases/download/v1.3.2/age-v1.3.2-linux-amd64.tar.gz /tmp/age.tar.gz
+ARG AGE_VERSION AGE_SHA256
+ADD --checksum=sha256:${AGE_SHA256} \
+    https://github.com/FiloSottile/age/releases/download/${AGE_VERSION}/age-${AGE_VERSION}-linux-amd64.tar.gz /tmp/age.tar.gz
 RUN tar -xzf /tmp/age.tar.gz -C /tmp age/age age/LICENSE
 
 # --- base: the MCP gateway and the Keycloak MCP server; the other targets add to it. ---
