@@ -371,8 +371,8 @@ _claude_pull_bases(){
 }
 
 # Builds the image of the agent (see README, "Installation", Step 2), from this repository: its base images are pulled
-# first (_claude_pull_bases). With --refresh, every layer is built again (--no-cache), so that the packages of Ubuntu,
-# gh and Git get their latest security updates; the versions pinned in the repository don't change. Agents started
+# first (_claude_pull_bases). With --refresh, every layer is built again (--no-cache), so that the packages of Ubuntu
+# and Git get their latest security updates; the versions pinned in the repository don't change. Agents started
 # afterwards run the new image.
 claude_agent_build(){
     local -a refresh=()

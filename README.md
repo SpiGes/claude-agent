@@ -450,7 +450,7 @@ claude_mcp restart confluence       # e.g. after a new token in the secrets file
 
 ## Service images
 
-The secret broker, the MCP gateway and the MCP servers run from images of their own, built from `services/Dockerfile`, not from the image of the agent. Each container only holds what it runs: no .NET SDK, Node, Git, or `gh` next to the secrets, no tool of a service in the agent, and a rebuild of the agent image doesn't restart the services.
+The secret broker, the MCP gateway and the MCP servers run from images of their own, built from `services/Dockerfile`, not from the image of the agent. Each container only holds the tools and packages of what it runs: no .NET SDK, Node, Git, or `gh` next to the secrets, no tool of a service in the agent, and a rebuild of the agent image doesn't restart the services. The Python modules of `broker/` are the exception: they're in every service image (they hold no secret, and each container only runs its own).
 
 | Image (`bfs-claude-services:<target>`) | Content | Containers |
 |---|---|---|
@@ -465,7 +465,7 @@ The secret broker, the MCP gateway and the MCP servers run from images of their 
 
 How the images are built:
 
-- **Pinned inputs**: the base image by tag and digest (`ubuntu:noble@sha256:...`), the Python packages by version and hash, transitive dependencies included (`services/<target>/requirements.txt`, see "Dependencies"), Oracle Instant Client by URL and SHA-256. The Ubuntu packages come from the signed archive of Ubuntu, in their latest version at the build (see "Dependencies").
+- **Pinned inputs**: the base image by tag and digest (`ubuntu:noble@sha256:...`), the Python packages by version and hash, transitive dependencies included (`services/<target>/requirements.txt`, see "Dependencies"), Oracle Instant Client by URL and SHA-256, `age` by version and SHA-256. The Ubuntu packages come from the signed archive of Ubuntu, in their latest version at the build (see "Dependencies").
 - **Multi-stage**: the virtual environments are built in a stage of their own, with `pip install --require-hashes --only-binary=:all: --no-deps` (wheels only, every file checked against its hash, no package outside the lock), then `pip` is removed from them and they're copied into their target. `curl` and `unzip` stay in the download stage of Instant Client. No compiler, `pip` cache or package list reaches an image.
 - **Unprivileged**: the default user of the images is `service` (uid 10001, no login, no home); `launch.sh` runs every container with the account of the person, without capability, without privilege escalation, with a read-only file system and a tmpfs for `/tmp`.
 - **No secret in an image**: the secrets reach the running containers only, from the secret broker (see "MCP gateway"); no build argument holds one.
@@ -480,7 +480,7 @@ Every input of the two images has an exact version, except the apt packages: the
 |---|---|---|
 | Base images: `dotnet/sdk` and `node` (`Dockerfile`), `ubuntu` (`services/Dockerfile`) | Tag and digest (`image:tag@sha256:...`) | Dependabot |
 | Python packages: services (`services/<target>/`), `yq` and `semgrep` of the agent (`tools/python/<tool>/`) | Lock with the version and hashes of every package, transitive ones included (`requirements.txt`, generated with `pip-compile` from `requirements.in`, which names the direct packages only); installed from wheels only, nothing outside the lock | Dependabot, or by hand (below) |
-| npm tools of the agent: `@ast-grep/cli`, `@mermaid-js/mermaid-cli`, `json5` (`tools/npm/`) | `package-lock.json`, with the integrity hash of every package; installed with `npm ci` | Dependabot, or by hand (below) |
+| npm tools of the agent: `@ast-grep/cli`, `@mermaid-js/mermaid-cli`, `json5` (`tools/npm/`) | `package-lock.json`, with the integrity hash of every package; installed with `npm ci`. Exception: the browser that the install script of Puppeteer downloads (`chrome-headless-shell`, for `mmdc`) has no hash check; its version is set by the version of Puppeteer in the lock | Dependabot, or by hand (below) |
 | Binaries downloaded with `curl`: Helm, Dart Sass, Oracle Instant Client, `gh` (`.deb` of the GitHub release) | Version (or URL) and SHA-256 in the `ARG` block at the top of the Dockerfile | By hand |
 | `age` of the broker image: official release binary from GitHub (Go modules can't be downloaded from the corporate network) | Version and SHA-256 of the archive in the `ARG` block at the top of `services/Dockerfile` (`ADD --checksum`) | By hand: Sigsum proof of the release (`.proof` file) and advisories of its Go version checked before the hash is changed |
 | .NET tools: `reportgenerator`, `ilspycmd` | Version in the `ARG` block at the top of the Dockerfile (signed NuGet packages) | By hand |
@@ -489,7 +489,7 @@ Every input of the two images has an exact version, except the apt packages: the
 
 **Cooldown.** A new release is adopted once it's at least 14 days old: a compromised release is usually found and withdrawn within days. A release that fixes a security advisory is adopted at once, when it's published with an attestation of its origin (e.g. trusted publishing on PyPI) and no advisory concerns it; for a Python package, it's then pinned in the `requirements.in` of its lock, with the advisory it fixes. The release notes are read before a version is chosen.
 
-**Dependabot** (`.github/dependabot.yml`) proposes the new versions of the base images, of the Python locks and of the npm lock in pull requests, weekly, with the cooldown of 14 days; its security updates aren't delayed. Its alerts and security updates are enabled in the settings of the repository (Code security). A pull request of Dependabot is reviewed like any other: release notes, advisories (below), images rebuilt and tested on the host.
+**Dependabot** (`.github/dependabot.yml`) proposes the new versions of the base images, of the Python locks and of the npm lock in pull requests, weekly, with the cooldown of 14 days; its security updates aren't delayed. Its alerts and security updates are enabled in the settings of the repository (Code security). A pull request of Dependabot is reviewed like any other: release notes, advisories (below), images rebuilt and tested on the host. The cooldown of Dependabot applies to the package it updates, not necessarily to the transitive packages of the regenerated lock: these are checked too (publication date, advisories), or the lock is generated again by hand with the commands below.
 
 **Advisories.** Each lock is checked before a merge, in the virtual environment of the clone (see "Development"): `pip-audit` for the Python locks, `npm audit` for the npm lock. An advisory is checked against the code that runs (is the vulnerable function reached by the tool or the service?) before a version is kept.
 

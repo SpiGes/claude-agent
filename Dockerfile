@@ -225,7 +225,9 @@ ENV PUPPETEER_CACHE_DIR=/opt/puppeteer
 # (tools/npm/package-lock.json):
 # - @ast-grep/cli (`ast-grep`, `sg`): structural code search across C#/TypeScript, matches syntax rather than text
 # - @mermaid-js/mermaid-cli (`mmdc`): renders Mermaid diagram code to PNG/SVG/PDF. Its install script downloads
-#   chrome-headless-shell (Puppeteer), so the install scripts run.
+#   chrome-headless-shell (Puppeteer), so the install scripts run. The browser is the only download of the image
+#   without a hash check: its version is set by the version of Puppeteer in the lock, and it comes from the storage
+#   of Google over HTTPS (README, "Dependencies").
 # - json5: prints plain JSON from a JSON file with comments and a BOM (e.g. the backend appsettings.json), for jq
 # The folder is created first: a folder created by COPY --chmod takes the mode of the files (0644, which the user of the
 # container can't enter).

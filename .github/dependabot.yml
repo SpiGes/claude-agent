@@ -1,8 +1,8 @@
 # Version updates of the images (see README, "Dependencies"): every version is pinned, Dependabot proposes the new
 # ones in pull requests. A new release is only proposed once it's 14 days old (cooldown); the security updates of
-# Dependabot aren't delayed. Not covered, updated by hand: the binaries downloaded with curl (Helm, Dart Sass, Oracle
-# Instant Client), the .NET tools (reportgenerator, ilspycmd), and the development tools (requirements-dev.txt,
-# .pre-commit-config.yaml).
+# Dependabot aren't delayed. Not covered, updated by hand: the ARG blocks at the top of the Dockerfiles (binaries
+# downloaded with curl: Helm, Dart Sass, gh, Oracle Instant Client; age; the .NET tools reportgenerator and ilspycmd;
+# the key fingerprint of the Git PPA), and the development tools (requirements-dev.txt, .pre-commit-config.yaml).
 version: 2
 updates:
   # Base images of Dockerfile (dotnet/sdk, node) and services/Dockerfile (ubuntu): digests and tags.
