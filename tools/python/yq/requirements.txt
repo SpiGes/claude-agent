@@ -4,8 +4,6 @@
 #
 #    pip-compile --allow-unsafe --generate-hashes --no-emit-index-url --output-file=requirements.txt --pip-args='--only-binary=:all: --uploaded-prior-to=P14D' --strip-extras requirements.in
 #
---only-binary :all:
-
 argcomplete==3.7.2 \
     --hash=sha256:6029205678bdd9c1c728a155f5f9ecf5812393f969eef58807641a2bc2aa5b19
     # via yq
@@ -89,6 +87,7 @@ tomlkit==0.15.2 \
 xmltodict==1.0.4 \
     --hash=sha256:a4a00d300b0e1c59fc2bfccb53d7b2e88c32f200df138a0dd2229f842497026a
     # via yq
-yq==4.2.0 \
-    --hash=sha256:818a45033517852f5768d02cb7a7f02d63d06f971ef2c8d6c2641f0f81a2e31f
+yq==4.4.5 \
+    --hash=sha256:4e8b4e54979b26554c72a7e669009017a7fdd3fb00bbae0b26f82a86636c289f \
+    --hash=sha256:e17b21a927d04ae33f61a7284351b69b0a539bfb73b852a04a907b79bcd15de2
     # via -r requirements.in
