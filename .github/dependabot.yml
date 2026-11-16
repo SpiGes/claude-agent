@@ -15,6 +15,11 @@ updates:
     cooldown:
       default-days: 14
     open-pull-requests-limit: 5
+    ignore:
+      # A new major of Node.js is adopted by hand, once it's an LTS release: a major is "Current" for its first six
+      # months, and the LTS line in use keeps getting its security releases.
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
 
   # Python packages locked with pip-compile (requirements.in -> requirements.txt with hashes).
   - package-ecosystem: pip
