@@ -13,8 +13,9 @@
 #   docker build -f services/Dockerfile --target <target> -t bfs-claude-services:<target> .
 #
 # Supply chain: the base image is pinned by tag and digest, the Python packages by version and hash (transitive
-# dependencies included, services/<target>/requirements.txt), and the Instant Client by URL and SHA-256. The versions
-# are updated through Dependabot (.github/dependabot.yml) or by hand, as described in the README ("Dependencies").
+# dependencies included, services/<target>/requirements.txt), and the Instant Client by URL and SHA-256. The apt
+# packages come from the signed archive of Ubuntu, in their latest version at the build. The versions are updated
+# through Dependabot (.github/dependabot.yml) or by hand, as described in the README ("Dependencies").
 # No secret enters the image: the secrets are handed to the running containers by the secret broker.
 
 # --- Common layer of every service: Python of the distribution, BIT certificates, unprivileged user. Ubuntu 24.04, ---

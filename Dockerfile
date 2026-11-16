@@ -1,7 +1,8 @@
 # check=error=true
 # Image of the agent. Supply chain (see README, "Dependencies"): the base images are pinned by tag and digest, the
 # Python and npm tools by version and hash (tools/), the binaries downloaded with curl by SHA-256, and the apt
-# packages come from signed repositories. A warning of the Docker build checks fails the build (check=error=true).
+# packages come from signed repositories, in their latest version at the build. A warning of the Docker build
+# checks fails the build (check=error=true).
 
 # Node.js runtime, copied later instead of installed via apt to control the exact version.
 FROM node:24.22.3-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54 AS node-source
