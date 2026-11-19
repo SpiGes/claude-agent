@@ -25,7 +25,7 @@ FROM node:24.22.3-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b
 # Base image: .NET SDK, needed to build/test the backend (ASP.NET Core, PostgreSQL, Oracle).
 # The Ubuntu release (noble = 24.04) is pinned in the tag, so that it only changes on purpose
 # (the git PPA below also targets noble); the digest pins the exact build, updated by Dependabot.
-FROM mcr.microsoft.com/dotnet/sdk:10.0-noble@sha256:fe0fd4e93bd2fbb47c883b7a6369e5c8d3db8bf01cdc5981f6ee35fbdf3ff4fb
+FROM mcr.microsoft.com/dotnet/sdk:10.0-noble@sha256:bef136a371963aaa46ec97882845ef6f54dec15728bb4b128b1c2a400ffbc9b4
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
