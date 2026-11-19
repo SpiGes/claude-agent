@@ -80,6 +80,16 @@ To save tokens, prefer these over a full Read + manual scan/edit when they fit:
 - `ilspycmd` — decompiles a type of a NuGet package, when the behaviour of a library must be checked
   rather than assumed (retry, default values, filter order):
   `ilspycmd -t <Namespace.Type> ~/.nuget/packages/<package>/<version>/lib/<tfm>/<assembly>.dll`.
+- `dotnet ef` (`dotnet-ef`) — creates and checks the EF Core migrations of a repository, with the `--project`,
+  `--startup-project` and `--context` of the `DbContext` (`dotnet ef dbcontext list` names the contexts; a
+  `CreateMigration*.ps1` script of the repository gives them when there is one):
+  `dotnet ef migrations add <Name>`, `dotnet ef migrations has-pending-model-changes` (model and snapshot
+  aligned, checked before a commit that changes an entity), `dotnet ef migrations script <from> <to>` (SQL of a
+  migration, to review it), `dotnet ef migrations list --no-connect`. The tool builds and runs the startup
+  project, so it only works on a startup project that targets `net10.0` (e.g. backend, grouper,
+  key-figure-calculator): the container has no .NET 8 runtime. A connection string is never passed on the
+  command line (`--connection`), and `dotnet ef database update` or `drop` is only run on the local Postgres,
+  on the user's request: the shared environments get their migrations from the deployed services.
 - `json5` — reads a JSON file with comments and a BOM (e.g. the backend `appsettings.json`) and prints
   plain JSON, to pipe to `jq`: `json5 appsettings.json | jq '.SpiGes.SurveyPartDatabaseTableNameMapping'`.
   Preferred over hand-written regexes to strip `//` and `/* */` comments.

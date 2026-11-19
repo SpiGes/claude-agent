@@ -484,6 +484,7 @@ Every input of the two images has an exact version, except the apt packages: the
 | Binaries downloaded with `curl`: Helm, Dart Sass, Oracle Instant Client, `gh` (`.deb` of the GitHub release) | Version (or URL) and SHA-256 in the `ARG` block at the top of the Dockerfile | By hand |
 | `age` of the broker image: official release binary from GitHub (Go modules can't be downloaded from the corporate network) | Version and SHA-256 of the archive in the `ARG` block at the top of `services/Dockerfile` (`ADD --checksum`) | By hand: Sigsum proof of the release (`.proof` file) and advisories of its Go version checked before the hash is changed |
 | .NET tools: `reportgenerator`, `ilspycmd` | Version in the `ARG` block at the top of the Dockerfile (signed NuGet packages) | By hand |
+| .NET tool `dotnet-ef` | Version and SHA-256 of the `.nupkg` in the `ARG` block at the top of the Dockerfile; signatures checked (`dotnet nuget verify --all`) and installed from that file only. Its major follows the one of the SDK | By hand |
 | Ubuntu packages, Git (PPA) | Signed repositories, latest version at the build | Monthly rebuild (below) |
 | Claude Code | Latest version | Updates itself (see Installation details) |
 

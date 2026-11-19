@@ -12,6 +12,8 @@ ARG GH_VERSION=2.103.3
 ARG GH_SHA256=e3bafef96328d1a67de3a968bdfe1cc2ffd58cf6aba8b5e201356897ed06bb3d
 ARG REPORTGENERATOR_VERSION=5.5.11
 ARG ILSPYCMD_VERSION=11.1.0.9782
+ARG DOTNET_EF_VERSION=10.0.14
+ARG DOTNET_EF_SHA256=db038862c04a1e61cd470d607251651e9f167d84c403b12c2cc1841250ad88fd
 ARG HELM_VERSION=v3.22.1
 ARG HELM_SHA256=896cf63684a42a723d61c980369d6e588330927deb13676ca0d85006dd6da0ea
 ARG DART_SASS_VERSION=1.102.0
@@ -162,6 +164,25 @@ RUN dotnet tool install dotnet-reportgenerator-globaltool --version "${REPORTGEN
 ARG ILSPYCMD_VERSION
 RUN dotnet tool install ilspycmd --version "${ILSPYCMD_VERSION}" --tool-path /opt/dotnet-tools \
     && ln -s /opt/dotnet-tools/ilspycmd /usr/local/bin/ilspycmd
+
+# EF Core command-line tools (`dotnet ef`), used to create and check the migrations of the SpiGes repositories
+# (the `CreateMigration*.ps1` scripts call it). The major follows the SDK: a tool of a newer major needs its own
+# runtime. Unlike the two tools above, the package is pinned by SHA-256 too: the .nupkg of nuget.org is checked
+# against its hash, then its signatures (Microsoft author signature, nuget.org repository signature; revocation
+# checked offline, as at run time below), and the tool is installed from that local file only (`<clear />`), so
+# no other package is fetched.
+ARG DOTNET_EF_VERSION DOTNET_EF_SHA256
+RUN mkdir /tmp/dotnet-ef \
+    && curl -fsSL -o "/tmp/dotnet-ef/dotnet-ef.${DOTNET_EF_VERSION}.nupkg" \
+        "https://api.nuget.org/v3-flatcontainer/dotnet-ef/${DOTNET_EF_VERSION}/dotnet-ef.${DOTNET_EF_VERSION}.nupkg" \
+    && echo "${DOTNET_EF_SHA256}  /tmp/dotnet-ef/dotnet-ef.${DOTNET_EF_VERSION}.nupkg" | sha256sum -c - \
+    && NUGET_CERT_REVOCATION_MODE=offline dotnet nuget verify --all "/tmp/dotnet-ef/dotnet-ef.${DOTNET_EF_VERSION}.nupkg" \
+    && printf '<configuration><packageSources><clear /><add key="local" value="/tmp/dotnet-ef" /></packageSources></configuration>' \
+        > /tmp/dotnet-ef/nuget.config \
+    && dotnet tool install dotnet-ef --version "${DOTNET_EF_VERSION}" --tool-path /opt/dotnet-tools \
+        --configfile /tmp/dotnet-ef/nuget.config \
+    && ln -s /opt/dotnet-tools/dotnet-ef /usr/local/bin/dotnet-ef \
+    && rm -r /tmp/dotnet-ef
 
 # Helm (`helm template`), renders the charts of the gitops repository per environment
 # (values-<env>.yaml), to check a change before it's pushed. Only the client binary is used: no
