@@ -14,6 +14,8 @@ can review.
   checked after `git worktree add`; the file is rewritten by hand only when the path is absolute.
   The branch can't be selected in the main checkout while the worktree exists: the user opens the
   worktree folder instead.
+- The upstream of the branch is set to its own remote branch right after `git worktree add`, and
+  checked with `git push --dry-run` (see "Worktrees" in the agent-level CLAUDE.md).
 
 ## For each task
 
