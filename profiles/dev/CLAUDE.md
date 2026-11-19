@@ -207,6 +207,14 @@ under `~/.cache/agent-venvs/<repository>`, at the front of the `PATH`. It's crea
 `python3 -m venv --upgrade-deps`, so that it doesn't keep the outdated `pip` of the system Python. When a hook can't
 run, the commit isn't made and the error is reported to the user.
 
+**Worktrees.** A branch created with a worktree from a remote branch (e.g.
+`git worktree add -b <branch> <path> origin/master`) gets that remote branch as its upstream: a pull or the sync of
+the editor then works against `master`, and a plain `git push` is refused. Without any upstream, a plain `git push`
+or the sync of VS Code on the host fails, and the branch isn't published. So, right after the creation, the upstream
+is set to the branch of the same name on `origin`, even before it exists:
+`git config branch.<branch>.remote origin` and `git config branch.<branch>.merge refs/heads/<branch>`. The setup is
+checked with `git push --dry-run`, which must show `[new branch] <branch> -> <branch>`.
+
 ## Files shared with the user
 
 Files that the user reads, copies, or edits are written to `/shared` (mounted from the host), never
