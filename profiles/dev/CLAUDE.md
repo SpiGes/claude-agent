@@ -209,6 +209,30 @@ Jira issue the pull request belongs to, never of a task; `<description>` is a sh
 Example: `[#4] - Adds voice input with /voice, through the WSLg audio server`.
 A squash merge keeps the title as the message of the merge commit.
 
+Before a pull request is created, the own work is reviewed once more on the full diff against the target
+branch, the checks of `rules/secure-coding.md` included (no secret in the commits of the branch). The
+description of every pull request, whatever the type of the work item, has the chapters:
+
+- Context: the need, and the design document when there is one
+- Main Changes: grouped by task (on Azure DevOps), including what isn't covered yet (tasks still open)
+  and the security-relevant changes (new entry point and its authorization, new input format, new or
+  upgraded package), or one line saying there is none
+- Tests: the tests run (test projects and results, new tests), the validation done on an environment
+  (scenario, real or simulated data, result), and what isn't tested yet
+- Compatibility: what changes per environment (gitops, settings), the deployment order between the
+  repositories, the settings restricted to some environments, and the effect on existing data or
+  processes; one line when nothing changes
+
+The length of a description is limited by the host, so the description is written to a file first and its
+size is checked (`wc -c`) before it's sent:
+
+- Azure DevOps: 4000 characters. A longer description is refused without an error by the DevOps MCP server
+  (empty result, old description kept), and an update that changes the target branch together with the
+  description keeps the old description: the target and the description are changed in two calls. The
+  description returned by the call is compared with the file
+- GitHub: 65536 characters
+- Bitbucket: no limit known; the description returned by the call is checked
+
 **Git hooks.** A commit is never made with `--no-verify`, so that the hooks installed by the user (e.g. pre-commit)
 always run. The `.venv` of a repository is the user's, created on the host: its scripts point to host paths and don't
 run in the container, so it's never used nor recreated by the agent. When a hook needs the tools of the project, the

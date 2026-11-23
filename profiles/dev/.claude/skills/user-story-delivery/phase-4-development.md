@@ -65,16 +65,11 @@ can review.
 
 ## Pull request
 
-1. The own work is reviewed once more on the full diff against the target branch, the checks of
-   `secure-coding` included (no secret in the commits of the branch).
+1. The own work is reviewed once more on the full diff against the target branch, as described in the
+   pull request rules of the "Commit conventions" of the agent `CLAUDE.md`.
 2. The branch is pushed and the pull request is created (`devops_pull_request_write`), linked to the
-   user story and to the development tasks, with the chapters:
-   - Context: the need, and the design document
-   - Main Changes: grouped by task, including compatibility and what isn't covered yet, and the
-     security-relevant changes (new entry point and its authorization, new input format, new or
-     upgraded package)
-   - Compatibility: what changes per environment (gitops), deployment order between the backend and
-     the gitops change, and the settings restricted to some environments
+   user story and to the development tasks, with the description chapters of these same rules
+   (Context, Main Changes, Tests, Compatibility).
 3. Files changed by the build but not part of the work (e.g. a regenerated API client) aren't
    committed; they're reported to the user.
 
