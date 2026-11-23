@@ -214,8 +214,9 @@ branch, the checks of `rules/secure-coding.md` included (no secret in the commit
 description of every pull request, whatever the type of the work item, has the chapters:
 
 - Context: the need, and the design document when there is one
-- Main Changes: grouped by task (on Azure DevOps), including what isn't covered yet (tasks still open) and the security-relevant changes (new entry point and its authorization, new
-  input format, new or upgraded package), or one line saying there is none
+- Main Changes: grouped by task (on Azure DevOps), including what isn't covered yet (tasks still open)
+  and the security-relevant changes (new entry point and its authorization, new input format, new or
+  upgraded package), or one line saying there is none
 - Tests: the tests run (test projects and results, new tests), the validation done on an environment
   (scenario, real or simulated data, result), and what isn't tested yet
 - Compatibility: what changes per environment (gitops, settings), the deployment order between the
