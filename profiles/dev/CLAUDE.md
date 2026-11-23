@@ -223,6 +223,16 @@ description of every pull request, whatever the type of the work item, has the c
   repositories, the settings restricted to some environments, and the effect on existing data or
   processes; one line when nothing changes
 
+The length of a description is limited by the host, so the description is written to a file first and its
+size is checked (`wc -c`) before it's sent:
+
+- Azure DevOps: 4000 characters. A longer description is refused without an error by the DevOps MCP server
+  (empty result, old description kept), and an update that changes the target branch together with the
+  description keeps the old description: the target and the description are changed in two calls. The
+  description returned by the call is compared with the file
+- GitHub: 65536 characters
+- Bitbucket: no limit known; the description returned by the call is checked
+
 **Git hooks.** A commit is never made with `--no-verify`, so that the hooks installed by the user (e.g. pre-commit)
 always run. The `.venv` of a repository is the user's, created on the host: its scripts point to host paths and don't
 run in the container, so it's never used nor recreated by the agent. When a hook needs the tools of the project, the
