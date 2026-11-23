@@ -69,7 +69,7 @@ can review.
    pull request rules of the "Commit conventions" of the agent `CLAUDE.md`.
 2. The branch is pushed and the pull request is created (`devops_pull_request_write`), linked to the
    user story and to the development tasks, with the description chapters of these same rules
-   (Context, Main Changes, Compatibility).
+   (Context, Main Changes, Tests, Compatibility).
 3. Files changed by the build but not part of the work (e.g. a regenerated API client) aren't
    committed; they're reported to the user.
 
