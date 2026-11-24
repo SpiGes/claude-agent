@@ -58,6 +58,8 @@ conversion:
 - A page published from a versioned document starts with a note naming the repository and the
   file, which is the reference: changes are made there, then published again (see "Source note").
 - The Confluence table of contents macro follows the note (see "Table of contents").
+- Each priority marker `**P1**`, `**P2**` or `**P3**` is replaced by a coloured Confluence status marker (see
+  "Priority markers").
 - The body is passed with `content_format: "markdown"`, through `content_file` when it is long.
 
 ### Body preparation
@@ -131,6 +133,30 @@ its heading. It is reported to the person, since it goes against the `design-doc
 table of contents comes from the publishing platform, never by hand); the versioned file isn't
 changed by this skill.
 
+### Priority markers
+
+Some documents mark the priority of an action with a bold marker, `**P1**`, `**P2**` or `**P3**`, in table cells
+and at the start of list items. In the published copy, each marker is replaced by the Confluence "Status" macro,
+written as storage XML on the same line:
+
+| Marker | `colour` | `title` |
+|---|---|---|
+| `**P1**` | `Red` | `P1` |
+| `**P2**` | `Yellow` | `P2` |
+| `**P3**` | `Grey` | `P3` |
+
+```
+<ac:structured-macro ac:name="status" ac:schema-version="1"><ac:parameter ac:name="colour">Red</ac:parameter><ac:parameter ac:name="title">P1</ac:parameter></ac:structured-macro>
+```
+
+- Only these exact markers are replaced: other bold text stays as it is, and a marker inside a code span or a code
+  block (e.g. where a document describes the convention) isn't changed.
+- The Markdown converter of the server keeps the macro when it sits inside a line: verified on 2026-11-24 in a
+  table cell, at the start of a numbered list item, and inside a sentence; each was stored as a real macro, with
+  its `ac:macro-id`.
+- Like every change of this section, the replacement is made by the step that generates the published copy, on
+  the marker itself, never by a global text replacement; the versioned file isn't changed.
+
 ## Drop folder
 
 The Confluence MCP server runs in a container of its own: it only reads files under the drop
@@ -201,6 +227,9 @@ document is never published flat under the root page when it sits in a sub-folde
      (`ac:structured-macro ac:name="toc"` with an `ac:macro-id`), with `outline` set to `false`.
      The Markdown view of the page only shows the parameter values as plain text (e.g. `truenone`),
      so the check is made on the storage format (`convert_to_markdown: false`)
+   - each priority marker of the document is stored as a status macro (`ac:structured-macro ac:name="status"`
+     with an `ac:macro-id` and the colour of its priority), and no `**P1**`, `**P2**` or `**P3**` is left as bold
+     text outside code
    - the page is a child of the expected parent page (`confluence_get_page_children` of the
      parent), and each folder page created holds the `children` macro
 
