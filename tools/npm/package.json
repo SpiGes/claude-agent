@@ -4,7 +4,7 @@
   "description": "Command-line tools of the agent image, installed with npm ci from package-lock.json (see README, \"Dependencies\").",
   "license": "UNLICENSED",
   "dependencies": {
-    "@ast-grep/cli": "0.51.1",
+    "@ast-grep/cli": "0.51.2",
     "@mermaid-js/mermaid-cli": "12.2.0",
     "json5": "2.2.3"
   }
