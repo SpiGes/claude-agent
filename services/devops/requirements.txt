@@ -4,8 +4,6 @@
 #
 #    pip-compile --allow-unsafe --generate-hashes --no-emit-index-url --output-file=requirements.txt --pip-args='--only-binary=:all: --uploaded-prior-to=P14D' --strip-extras requirements.in
 #
---only-binary :all:
-
 annotated-doc==0.0.5 \
     --hash=sha256:117bac03a25ede5df5440e855b32d556049ca169ead221505badf432fed4b101
     # via typer
@@ -555,8 +553,9 @@ markdown-it-py==4.2.0 \
 mcp==1.30.0 \
     --hash=sha256:666edb5009503e1047c9d60346a756f94b261f05cc2625f23d41c728ffc484d0
     # via fastmcp
-mcp-devops-onpremise==2.1.0 \
-    --hash=sha256:3c90c2594d6fcd097b5417d26501a3456c2a40cf23b9f55b0e19cf2f40a6a1be
+mcp-devops-onpremise==2.2.0 \
+    --hash=sha256:98f41bc2b4ea4ebe47ec5fb157db5cc9058dc4ca98f5ee01e0a92a72081888d4 \
+    --hash=sha256:bfd1efb1cc3db60b387907e1de1fd3bf9307943b070fa7940252d9c6f49fc0ad
     # via -r requirements.in
 mdurl==0.1.2 \
     --hash=sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8
